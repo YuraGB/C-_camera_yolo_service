@@ -50,7 +50,7 @@
         Frame() = default;
 
         Frame(const std::string& cam_id, int64_t id, int64_t ts, const cv::Mat& m = cv::Mat())
-            : camera_id(cam_id), frame_id(id), timestamp(ts), mat(m) {}
+            : camera_id(cam_id), frame_id(id), timestamp(ts), mat(m.empty() ? cv::Mat() : m.clone()) {}
 
         // --------------------------
         // Допоміжні методи для ONNX
