@@ -11,9 +11,6 @@ CameraManager::~CameraManager() {
     stopAllCameras();
 }
 
-// --------------------------
-// Додаємо камеру або відео-джерело
-// --------------------------
 bool CameraManager::addCamera(const std::string& camera_id, const std::string& source) {
     std::lock_guard<std::mutex> lock(cameras_mutex_);
     if (cameras_.find(camera_id) != cameras_.end()) return false;
@@ -22,9 +19,6 @@ bool CameraManager::addCamera(const std::string& camera_id, const std::string& s
     return true;
 }
 
-// --------------------------
-// Видаляємо камеру
-// --------------------------
 bool CameraManager::removeCamera(const std::string& camera_id) {
     std::lock_guard<std::mutex> lock(cameras_mutex_);
     auto it = cameras_.find(camera_id);
@@ -38,9 +32,6 @@ bool CameraManager::removeCamera(const std::string& camera_id) {
     return true;
 }
 
-// --------------------------
-// Запуск усіх камер
-// --------------------------
 void CameraManager::startAllCameras() {
     std::lock_guard<std::mutex> lock(cameras_mutex_);
     for (auto& [id, cam] : cameras_) {
@@ -51,9 +42,6 @@ void CameraManager::startAllCameras() {
     }
 }
 
-// --------------------------
-// Зупинка усіх камер
-// --------------------------
 void CameraManager::stopAllCameras() {
     std::lock_guard<std::mutex> lock(cameras_mutex_);
     for (auto& [id, cam] : cameras_) {
@@ -63,9 +51,6 @@ void CameraManager::stopAllCameras() {
     }
 }
 
-// --------------------------
-// Отримати останній кадр з камери
-// --------------------------
 std::shared_ptr<Frame> CameraManager::getLatestFrame(const std::string& camera_id) {
     std::lock_guard<std::mutex> lock(cameras_mutex_);
     auto it = cameras_.find(camera_id);
@@ -73,9 +58,6 @@ std::shared_ptr<Frame> CameraManager::getLatestFrame(const std::string& camera_i
     return dequeueFrame(*it->second);
 }
 
-// --------------------------
-// Основний цикл захоплення кадрів
-// --------------------------
 void CameraManager::captureLoop(const std::string& camera_id) {
     CameraInfo* cam = nullptr;
     {
@@ -86,14 +68,14 @@ void CameraManager::captureLoop(const std::string& camera_id) {
     }
 
     bool opened = false;
-    try { 
-        int index = std::stoi(cam->source); // спроба як індекс камери
+    try {
+        int index = std::stoi(cam->source);
         opened = cam->cap.open(index);
     } catch (...) {
-        opened = cam->cap.open(cam->source); // або як відеофайл
+        opened = cam->cap.open(cam->source);
         if (!opened) {
-            std::cerr << "[WARN] Failed to open source: " << cam->source 
-                    << " (check path and format)" << std::endl;
+            std::cerr << "[WARN] Failed to open source: " << cam->source
+                      << " (check path and format)" << std::endl;
             return;
         }
     }
@@ -104,7 +86,7 @@ void CameraManager::captureLoop(const std::string& camera_id) {
     }
 
     int64_t frame_id = 0;
-    auto fps_delay = std::chrono::milliseconds(200); // ~5 FPS
+    auto fps_delay = std::chrono::milliseconds(200);
 
     while (cam->running) {
         auto start_time = std::chrono::high_resolution_clock::now();
@@ -115,7 +97,7 @@ void CameraManager::captureLoop(const std::string& camera_id) {
             continue;
         }
 
-        cv::cvtColor(mat, mat, cv::COLOR_BGR2RGB); // для ONNX/Yolo
+        cv::cvtColor(mat, mat, cv::COLOR_BGR2RGB);
 
         auto frame = std::make_shared<Frame>(
             camera_id,
@@ -128,10 +110,6 @@ void CameraManager::captureLoop(const std::string& camera_id) {
 
         enqueueFrame(frame, *cam);
 
-        if (inferenceEngine_)
-            inferenceEngine_->processFrame(frame); // одразу відправляємо на інференс
-
-        // розрахунок часу сну для стабільного FPS
         auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
         auto sleep_time = fps_delay - std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
         if (sleep_time.count() > 0)
@@ -141,9 +119,6 @@ void CameraManager::captureLoop(const std::string& camera_id) {
     cam->cap.release();
 }
 
-// --------------------------
-// Приватні методи для черги
-// --------------------------
 void CameraManager::enqueueFrame(std::shared_ptr<Frame> frame, CameraInfo& cam) {
     std::lock_guard<std::mutex> lock(cam.queue_mutex);
     const size_t MAX_QUEUE = 10;
@@ -156,5 +131,5 @@ void CameraManager::enqueueFrame(std::shared_ptr<Frame> frame, CameraInfo& cam) 
 std::shared_ptr<Frame> CameraManager::dequeueFrame(CameraInfo& cam) {
     std::lock_guard<std::mutex> lock(cam.queue_mutex);
     if (cam.frame_queue.empty()) return nullptr;
-    return cam.frame_queue.back(); // завжди беремо останній
+    return cam.frame_queue.back();
 }
