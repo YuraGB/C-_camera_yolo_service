@@ -1,0 +1,82 @@
+# ------------------------------
+# Build folders
+# ------------------------------
+./build/
+./out/
+./bin/
+./lib/
+
+build/
+out/
+bin/
+lib/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+*.onnx
+
+# ------------------------------
+# Visual Studio
+# ------------------------------
+.vs/
+*.vcxproj.user
+*.vcxproj.filters
+*.sln.docstates
+
+# Debug/Release
+Debug/
+Release/
+x64/
+x86/
+
+# ------------------------------
+# Compiled files
+# ------------------------------
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.obj
+*.o
+*.pdb
+
+# Video / large media
+*.mp4
+*.avi
+*.mov
+
+
+# ------------------------------
+# Logs
+# ------------------------------
+*.log
+
+# ------------------------------
+# Temporary files
+# ------------------------------
+*.tmp
+*.temp
+
+# ------------------------------
+# OS files
+# ------------------------------
+.DS_Store
+Thumbs.db
+
+# ------------------------------
+# IDE (optional)
+# ------------------------------
+.idea/
+.vscode/
+
+# ------------------------------
+# OpenCV / ONNX runtime (optional)
+# ------------------------------
+*.onnx
+*.engine
