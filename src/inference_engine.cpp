@@ -40,6 +40,21 @@ std::string classIdToLabel(int class_id) {
 bool hasProvider(const std::vector<std::string>& providers, const char* provider_name) {
     return std::find(providers.begin(), providers.end(), provider_name) != providers.end();
 }
+
+void logProviders(const std::vector<std::string>& providers) {
+    std::cout << "[ONNX] Runtime version: " << Ort::GetVersionString() << std::endl;
+
+    if (providers.empty()) {
+        std::cout << "[ONNX] Available execution providers: none reported" << std::endl;
+        return;
+    }
+
+    std::cout << "[ONNX] Available execution providers:";
+    for (const auto& provider : providers) {
+        std::cout << " " << provider;
+    }
+    std::cout << std::endl;
+}
 }
 
 InferenceEngine::InferenceEngine(const std::string& model_path)
@@ -98,6 +113,7 @@ InferenceEngine::~InferenceEngine() {
 void InferenceEngine::configureExecutionProvider() {
     bool gpu_enabled = false;
     const auto providers = Ort::GetAvailableProviders();
+    logProviders(providers);
 
 #if defined(HAS_ORT_CUDA_PROVIDER)
     if (!gpu_enabled && hasProvider(providers, "CUDAExecutionProvider")) {
@@ -120,6 +136,9 @@ void InferenceEngine::configureExecutionProvider() {
     if (!gpu_enabled) {
         std::cout << "[ONNX] GPU execution provider not available, using CPUExecutionProvider" << std::endl;
     }
+
+    std::cout << "[ONNX] Provider version details are not exposed by the C++ runtime API; "
+                 "the runtime version above is the active ONNX Runtime build version." << std::endl;
 }
 
 void InferenceEngine::start() {
