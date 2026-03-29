@@ -106,6 +106,7 @@ target_link_libraries(camera_cv_service PRIVATE
     protobuf::libprotobuf
     Threads::Threads
     ${ONNXRUNTIME_LIBRARY}
+    Version
 )
 
 # ------------------------------
