@@ -33,6 +33,7 @@ private:
     void parseDetectionsFromYOLO();
 
     std::string model_path_;
+    std::string selected_execution_provider_ = "CPUExecutionProvider";
     Ort::Env env_;
     Ort::SessionOptions session_options_;
     std::unique_ptr<Ort::Session> session_;
