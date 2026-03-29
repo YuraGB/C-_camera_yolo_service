@@ -10,7 +10,13 @@
 #include <filesystem>
 #include <opencv2/opencv.hpp>
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
+
+#undef min
+#undef max
 #elif defined(__linux__)
 #include <unistd.h>
 #endif
