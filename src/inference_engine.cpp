@@ -192,10 +192,10 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
     configureBaseOptions(session_options_);
     configureExecutionProvider();
 
-    try {
-        std::filesystem::path path_fs(model_path);
-        std::wstring wmodel_path = path_fs.wstring();
+    std::filesystem::path path_fs(model_path);
+    std::wstring wmodel_path = path_fs.wstring();
 
+    try {
         std::cout << "[ONNX] Creating session with provider preference: "
                   << selected_execution_provider_ << std::endl;
 
