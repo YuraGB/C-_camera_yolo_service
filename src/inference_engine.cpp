@@ -156,8 +156,7 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
 
     frame->detections.clear();
 
-    cv::Mat send_mat;
-    cv::resize(frame->mat, send_mat, cv::Size(640, 640));
+    cv::Mat send_mat = frame->mat;
     std::vector<int> jpeg_params = {cv::IMWRITE_JPEG_QUALITY, 90};
     cv::imencode(".jpg", send_mat, frame->jpeg, jpeg_params);
 
