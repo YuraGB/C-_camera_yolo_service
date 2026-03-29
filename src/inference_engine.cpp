@@ -183,9 +183,13 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
       running_(false)
 {
     const auto cpu_threads = std::max(1u, std::thread::hardware_concurrency());
-    session_options_.SetIntraOpNumThreads(static_cast<int>(cpu_threads));
-    session_options_.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
-    session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    auto configureBaseOptions = [cpu_threads](Ort::SessionOptions& options) {
+        options.SetIntraOpNumThreads(static_cast<int>(cpu_threads));
+        options.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
+        options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    };
+
+    configureBaseOptions(session_options_);
     configureExecutionProvider();
 
     try {
@@ -226,6 +230,47 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
     } catch (const Ort::Exception& e) {
         std::cerr << "[ONNX] Session creation failed with provider preference "
                   << selected_execution_provider_ << ": " << e.what() << std::endl;
+
+        if (selected_execution_provider_ != "CPUExecutionProvider") {
+            try {
+                std::cout << "[ONNX] Retrying session creation with CPUExecutionProvider fallback" << std::endl;
+                Ort::SessionOptions cpu_session_options;
+                configureBaseOptions(cpu_session_options);
+                selected_execution_provider_ = "CPUExecutionProvider";
+                session_ = std::make_unique<Ort::Session>(env_, wmodel_path.c_str(), cpu_session_options);
+                std::cout << "[ONNX] Session created successfully with CPUExecutionProvider fallback" << std::endl;
+
+                Ort::AllocatorWithDefaultOptions allocator;
+
+                size_t num_inputs = session_->GetInputCount();
+                input_names_str_.resize(num_inputs);
+                input_names_.resize(num_inputs);
+
+                for (size_t i = 0; i < num_inputs; ++i) {
+                    auto name = session_->GetInputNameAllocated(i, allocator);
+                    input_names_str_[i] = (!name || std::strlen(name.get()) == 0) ? "images" : std::string(name.get());
+                    input_names_[i] = input_names_str_[i].c_str();
+                    std::cout << "[ONNX] Input " << i << ": " << input_names_[i] << std::endl;
+                }
+
+                size_t num_outputs = session_->GetOutputCount();
+                output_names_str_.resize(num_outputs);
+                output_names_.resize(num_outputs);
+
+                for (size_t i = 0; i < num_outputs; ++i) {
+                    auto name = session_->GetOutputNameAllocated(i, allocator);
+                    output_names_str_[i] = (!name || std::strlen(name.get()) == 0) ? "output0" : std::string(name.get());
+                    output_names_[i] = output_names_str_[i].c_str();
+                    std::cout << "[ONNX] Output " << i << ": " << output_names_[i] << std::endl;
+                }
+            } catch (const Ort::Exception& fallback_error) {
+                std::cerr << "[ONNX] CPU fallback session creation failed: "
+                          << fallback_error.what() << std::endl;
+            } catch (const std::exception& fallback_error) {
+                std::cerr << "[ONNX] CPU fallback init error: "
+                          << fallback_error.what() << std::endl;
+            }
+        }
     } catch (const std::exception& e) {
         std::cerr << "[ONNX] Init error with provider preference "
                   << selected_execution_provider_ << ": " << e.what() << std::endl;
