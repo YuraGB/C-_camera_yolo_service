@@ -73,7 +73,12 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
         std::filesystem::path path_fs(model_path);
         std::wstring wmodel_path = path_fs.wstring();
 
+        std::cout << "[ONNX] Creating session with provider preference: "
+                  << selected_execution_provider_ << std::endl;
+
         session_ = std::make_unique<Ort::Session>(env_, wmodel_path.c_str(), session_options_);
+        std::cout << "[ONNX] Session created successfully with provider preference: "
+                  << selected_execution_provider_ << std::endl;
 
         Ort::AllocatorWithDefaultOptions allocator;
 
@@ -100,9 +105,11 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
         }
 
     } catch (const Ort::Exception& e) {
-        std::cerr << "ONNX Runtime exception: " << e.what() << std::endl;
+        std::cerr << "[ONNX] Session creation failed with provider preference "
+                  << selected_execution_provider_ << ": " << e.what() << std::endl;
     } catch (const std::exception& e) {
-        std::cerr << "Init error: " << e.what() << std::endl;
+        std::cerr << "[ONNX] Init error with provider preference "
+                  << selected_execution_provider_ << ": " << e.what() << std::endl;
     }
 }
 
@@ -117,26 +124,49 @@ void InferenceEngine::configureExecutionProvider() {
 
 #if defined(HAS_ORT_CUDA_PROVIDER)
     if (!gpu_enabled && hasProvider(providers, "CUDAExecutionProvider")) {
-        OrtCUDAProviderOptions cuda_options{};
-        cuda_options.device_id = 0;
-        session_options_.AppendExecutionProvider_CUDA(cuda_options);
-        std::cout << "[ONNX] Using CUDAExecutionProvider" << std::endl;
-        gpu_enabled = true;
+        try {
+            std::cout << "[ONNX] Attempting to enable CUDAExecutionProvider" << std::endl;
+            OrtCUDAProviderOptions cuda_options{};
+            cuda_options.device_id = 0;
+            session_options_.AppendExecutionProvider_CUDA(cuda_options);
+            selected_execution_provider_ = "CUDAExecutionProvider";
+            std::cout << "[ONNX] CUDAExecutionProvider enabled" << std::endl;
+            gpu_enabled = true;
+        } catch (const Ort::Exception& e) {
+            std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider: "
+                      << e.what() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider: "
+                      << e.what() << std::endl;
+        }
     }
 #endif
 
 #if defined(HAS_ORT_DML_PROVIDER)
     if (!gpu_enabled && hasProvider(providers, "DmlExecutionProvider")) {
-        session_options_.AppendExecutionProvider_DML(0);
-        std::cout << "[ONNX] Using DmlExecutionProvider" << std::endl;
-        gpu_enabled = true;
+        try {
+            std::cout << "[ONNX] Attempting to enable DmlExecutionProvider" << std::endl;
+            session_options_.AppendExecutionProvider_DML(0);
+            selected_execution_provider_ = "DmlExecutionProvider";
+            std::cout << "[ONNX] DmlExecutionProvider enabled" << std::endl;
+            gpu_enabled = true;
+        } catch (const Ort::Exception& e) {
+            std::cerr << "[ONNX] Failed to enable DmlExecutionProvider: "
+                      << e.what() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[ONNX] Failed to enable DmlExecutionProvider: "
+                      << e.what() << std::endl;
+        }
     }
 #endif
 
     if (!gpu_enabled) {
+        selected_execution_provider_ = "CPUExecutionProvider";
         std::cout << "[ONNX] GPU execution provider not available, using CPUExecutionProvider" << std::endl;
     }
 
+    std::cout << "[ONNX] Selected execution provider preference: "
+              << selected_execution_provider_ << std::endl;
     std::cout << "[ONNX] Provider version details are not exposed by the C++ runtime API; "
                  "the runtime version above is the active ONNX Runtime build version." << std::endl;
 }
