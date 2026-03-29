@@ -7,7 +7,13 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <filesystem>
 #include <opencv2/opencv.hpp>
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
 
 #include "inference_engine.h"
 #include "camera_manager.h"
@@ -17,6 +23,67 @@
 // Глобальний прапорець для завершення сервісу
 // ------------------------------
 std::atomic<bool> g_running{true};
+
+namespace {
+std::filesystem::path getExecutableDir() {
+#ifdef _WIN32
+    std::wstring buffer(MAX_PATH, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0) {
+        return {};
+    }
+
+    buffer.resize(length);
+    return std::filesystem::path(buffer).parent_path();
+#elif defined(__linux__)
+    std::vector<char> buffer(4096, '\0');
+    const ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size());
+    if (length <= 0) {
+        return {};
+    }
+
+    return std::filesystem::path(std::string(buffer.data(), static_cast<size_t>(length))).parent_path();
+#else
+    return {};
+#endif
+}
+
+std::filesystem::path sourceRootHint() {
+    return std::filesystem::path(__FILE__).parent_path().parent_path();
+}
+
+std::filesystem::path resolveExistingPath(const std::string& raw_path) {
+    const std::filesystem::path input(raw_path);
+    if (input.is_absolute() && std::filesystem::exists(input)) {
+        return input;
+    }
+
+    std::vector<std::filesystem::path> candidates;
+    candidates.push_back(input);
+
+    const auto cwd = std::filesystem::current_path();
+    candidates.push_back(cwd / input);
+
+    const auto exe_dir = getExecutableDir();
+    if (!exe_dir.empty()) {
+        candidates.push_back(exe_dir / input);
+        candidates.push_back(exe_dir.parent_path() / input);
+        candidates.push_back(exe_dir.parent_path().parent_path() / input);
+    }
+
+    const auto source_root = sourceRootHint();
+    candidates.push_back(source_root / input);
+
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (std::filesystem::exists(candidate, ec) && !ec) {
+            return std::filesystem::weakly_canonical(candidate, ec);
+        }
+    }
+
+    return input;
+}
+}
 
 // ------------------------------
 // Обробник сигналу Ctrl+C
@@ -81,7 +148,13 @@ int main() {
     // ------------------------------
     // Ініціалізація компонентів
     // ------------------------------
-    InferenceEngine inference_engine("models/yolov8x.onnx");
+    const auto model_path = resolveExistingPath("models/yolov8x.onnx");
+    const auto test_video_path = resolveExistingPath("test_video.mp4");
+
+    std::cout << "[INFO] Model path: " << model_path.string() << std::endl;
+    std::cout << "[INFO] Test video path: " << test_video_path.string() << std::endl;
+
+    InferenceEngine inference_engine(model_path.string());
     CameraManager camera_manager(&inference_engine);
     GRPCServer grpc_server("0.0.0.0:50051");
 
@@ -89,7 +162,7 @@ int main() {
     std::vector<std::string> camera_ids = detectConnectedCameras(camera_manager, 10);
 
     // Додавання відео-файлів
-    std::vector<std::string> video_files = {"test_video.mp4"};
+    std::vector<std::string> video_files = {test_video_path.string()};
     std::vector<std::string> video_ids = addVideoSources(camera_manager, video_files);
 
     if (camera_ids.empty() && video_ids.empty()) {
