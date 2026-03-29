@@ -5,6 +5,10 @@
 #include <filesystem>
 #include <iostream>
 #include <opencv2/opencv.hpp>
+#ifdef _WIN32
+#include <windows.h>
+#include <winver.h>
+#endif
 
 #if defined(__has_include)
 #if __has_include(<onnxruntime/core/providers/cuda/cuda_provider_factory.h>)
@@ -41,6 +45,72 @@ bool hasProvider(const std::vector<std::string>& providers, const char* provider
     return std::find(providers.begin(), providers.end(), provider_name) != providers.end();
 }
 
+#ifdef _WIN32
+std::string narrow(const std::wstring& value) {
+    if (value.empty()) {
+        return {};
+    }
+
+    const int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 1) {
+        return {};
+    }
+
+    std::string result(static_cast<size_t>(size - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, result.data(), size, nullptr, nullptr);
+    return result;
+}
+
+std::string getFileVersionString(const std::wstring& dll_path) {
+    DWORD handle = 0;
+    const DWORD version_size = GetFileVersionInfoSizeW(dll_path.c_str(), &handle);
+    if (version_size == 0) {
+        return {};
+    }
+
+    std::vector<char> version_data(version_size);
+    if (!GetFileVersionInfoW(dll_path.c_str(), 0, version_size, version_data.data())) {
+        return {};
+    }
+
+    VS_FIXEDFILEINFO* file_info = nullptr;
+    UINT file_info_len = 0;
+    if (!VerQueryValueW(version_data.data(), L"\\", reinterpret_cast<LPVOID*>(&file_info), &file_info_len) ||
+        file_info == nullptr) {
+        return {};
+    }
+
+    return std::to_string(HIWORD(file_info->dwFileVersionMS)) + "." +
+           std::to_string(LOWORD(file_info->dwFileVersionMS)) + "." +
+           std::to_string(HIWORD(file_info->dwFileVersionLS)) + "." +
+           std::to_string(LOWORD(file_info->dwFileVersionLS));
+}
+
+void logLoadedModuleVersion(const wchar_t* module_name, const char* label) {
+    HMODULE module = GetModuleHandleW(module_name);
+    if (!module) {
+        std::cout << "[ONNX] " << label << " module is not currently loaded" << std::endl;
+        return;
+    }
+
+    std::wstring module_path(MAX_PATH, L'\0');
+    const DWORD length = GetModuleFileNameW(module, module_path.data(), static_cast<DWORD>(module_path.size()));
+    if (length == 0) {
+        std::cout << "[ONNX] " << label << " module is loaded, but its path could not be resolved" << std::endl;
+        return;
+    }
+
+    module_path.resize(length);
+    const auto version = getFileVersionString(module_path);
+    std::cout << "[ONNX] " << label << " module path: " << narrow(module_path) << std::endl;
+    if (version.empty()) {
+        std::cout << "[ONNX] " << label << " module version could not be determined" << std::endl;
+    } else {
+        std::cout << "[ONNX] " << label << " module version: " << version << std::endl;
+    }
+}
+#endif
+
 void logProviders(const std::vector<std::string>& providers) {
     std::cout << "[ONNX] Runtime version: " << Ort::GetVersionString() << std::endl;
 
@@ -54,6 +124,15 @@ void logProviders(const std::vector<std::string>& providers) {
         std::cout << " " << provider;
     }
     std::cout << std::endl;
+
+#ifdef _WIN32
+    if (hasProvider(providers, "CUDAExecutionProvider")) {
+        logLoadedModuleVersion(L"onnxruntime_providers_cuda.dll", "CUDAExecutionProvider");
+    }
+    if (hasProvider(providers, "TensorrtExecutionProvider")) {
+        logLoadedModuleVersion(L"onnxruntime_providers_tensorrt.dll", "TensorrtExecutionProvider");
+    }
+#endif
 }
 }
 
