@@ -43,6 +43,10 @@ grpc::Status DetectionServiceImpl::StreamDetections(
         proto_frame.set_timestamp(frame_ptr->timestamp);
         proto_frame.set_camera_id(frame_ptr->camera_id);
 
+        if (!frame_ptr->jpeg.empty()) {
+            proto_frame.set_image(frame_ptr->jpeg.data(), frame_ptr->jpeg.size());
+        }
+
         for (const auto& det : frame_ptr->detections) {
             auto* proto_det = proto_frame.add_detections();
             proto_det->set_label(det.label);
