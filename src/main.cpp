@@ -151,7 +151,6 @@ int main() {
         processFrames(video_ids);
 
         // Коротка пауза для стабільності FPS
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
     // ------------------------------
