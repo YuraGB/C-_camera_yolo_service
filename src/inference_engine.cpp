@@ -1,9 +1,21 @@
 #include "inference_engine.h"
 
-#include <iostream>
+#include <algorithm>
 #include <cstring>
-#include <opencv2/opencv.hpp>
 #include <filesystem>
+#include <iostream>
+#include <opencv2/opencv.hpp>
+
+#if defined(__has_include)
+#if __has_include(<onnxruntime/core/providers/cuda/cuda_provider_factory.h>)
+#include <onnxruntime/core/providers/cuda/cuda_provider_factory.h>
+#define HAS_ORT_CUDA_PROVIDER 1
+#endif
+#if __has_include(<onnxruntime/core/providers/dml/dml_provider_factory.h>)
+#include <onnxruntime/core/providers/dml/dml_provider_factory.h>
+#define HAS_ORT_DML_PROVIDER 1
+#endif
+#endif
 
 namespace {
 const std::vector<std::string> kCocoLabels = {
@@ -24,6 +36,10 @@ std::string classIdToLabel(int class_id) {
 
     return std::to_string(class_id);
 }
+
+bool hasProvider(const std::vector<std::string>& providers, const char* provider_name) {
+    return std::find(providers.begin(), providers.end(), provider_name) != providers.end();
+}
 }
 
 InferenceEngine::InferenceEngine(const std::string& model_path)
@@ -32,16 +48,17 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
       session_options_(),
       running_(false)
 {
-    session_options_.SetIntraOpNumThreads(1);
+    const auto cpu_threads = std::max(1u, std::thread::hardware_concurrency());
+    session_options_.SetIntraOpNumThreads(static_cast<int>(cpu_threads));
+    session_options_.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
     session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    configureExecutionProvider();
 
     try {
         std::filesystem::path path_fs(model_path);
         std::wstring wmodel_path = path_fs.wstring();
 
-        session_ = std::make_unique<Ort::Session>(
-            env_, wmodel_path.c_str(), session_options_
-        );
+        session_ = std::make_unique<Ort::Session>(env_, wmodel_path.c_str(), session_options_);
 
         Ort::AllocatorWithDefaultOptions allocator;
 
@@ -51,11 +68,7 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
 
         for (size_t i = 0; i < num_inputs; ++i) {
             auto name = session_->GetInputNameAllocated(i, allocator);
-            input_names_str_[i] =
-                (!name || std::strlen(name.get()) == 0)
-                    ? "images"
-                    : std::string(name.get());
-
+            input_names_str_[i] = (!name || std::strlen(name.get()) == 0) ? "images" : std::string(name.get());
             input_names_[i] = input_names_str_[i].c_str();
             std::cout << "[ONNX] Input " << i << ": " << input_names_[i] << std::endl;
         }
@@ -66,11 +79,7 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
 
         for (size_t i = 0; i < num_outputs; ++i) {
             auto name = session_->GetOutputNameAllocated(i, allocator);
-            output_names_str_[i] =
-                (!name || std::strlen(name.get()) == 0)
-                    ? "output0"
-                    : std::string(name.get());
-
+            output_names_str_[i] = (!name || std::strlen(name.get()) == 0) ? "output0" : std::string(name.get());
             output_names_[i] = output_names_str_[i].c_str();
             std::cout << "[ONNX] Output " << i << ": " << output_names_[i] << std::endl;
         }
@@ -84,6 +93,33 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
 
 InferenceEngine::~InferenceEngine() {
     stop();
+}
+
+void InferenceEngine::configureExecutionProvider() {
+    bool gpu_enabled = false;
+    const auto providers = Ort::GetAvailableProviders();
+
+#if defined(HAS_ORT_CUDA_PROVIDER)
+    if (!gpu_enabled && hasProvider(providers, "CUDAExecutionProvider")) {
+        OrtCUDAProviderOptions cuda_options{};
+        cuda_options.device_id = 0;
+        session_options_.AppendExecutionProvider_CUDA(cuda_options);
+        std::cout << "[ONNX] Using CUDAExecutionProvider" << std::endl;
+        gpu_enabled = true;
+    }
+#endif
+
+#if defined(HAS_ORT_DML_PROVIDER)
+    if (!gpu_enabled && hasProvider(providers, "DmlExecutionProvider")) {
+        session_options_.AppendExecutionProvider_DML(0);
+        std::cout << "[ONNX] Using DmlExecutionProvider" << std::endl;
+        gpu_enabled = true;
+    }
+#endif
+
+    if (!gpu_enabled) {
+        std::cout << "[ONNX] GPU execution provider not available, using CPUExecutionProvider" << std::endl;
+    }
 }
 
 void InferenceEngine::start() {
@@ -104,6 +140,9 @@ void InferenceEngine::processFrame(std::shared_ptr<Frame> frame) {
 
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
+        while (!input_queue_.empty()) {
+            input_queue_.pop();
+        }
         input_queue_.push(frame);
     }
 
@@ -170,17 +209,14 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
     std::vector<int64_t> input_shape = {1, infer_mat.channels(), infer_mat.rows, infer_mat.cols};
 
     try {
-        Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(
-            OrtArenaAllocator, OrtMemTypeDefault
-        );
+        Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
         Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
             memory_info,
             input_tensor_values.data(),
             input_tensor_values.size(),
             input_shape.data(),
-            input_shape.size()
-        );
+            input_shape.size());
 
         auto output_tensors = session_->Run(
             Ort::RunOptions{nullptr},
@@ -188,8 +224,7 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
             &input_tensor,
             input_names_.size(),
             output_names_.data(),
-            output_names_.size()
-        );
+            output_names_.size());
 
         if (!output_tensors.empty() && output_tensors[0].IsTensor()) {
             auto& tensor = output_tensors[0];
@@ -270,11 +305,7 @@ void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<
     cv::dnn::NMSBoxes(boxes, scores, conf_threshold, iou_threshold, indices);
 
     for (int idx : indices) {
-        frame->detections.push_back({
-            classIdToLabel(class_ids[idx]),
-            scores[idx],
-            BBox(boxes[idx])
-        });
+        frame->detections.push_back({classIdToLabel(class_ids[idx]), scores[idx], BBox(boxes[idx])});
     }
 
     std::cout << "[DEBUG] detections: " << frame->detections.size() << std::endl;
