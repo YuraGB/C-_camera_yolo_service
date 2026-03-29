@@ -41,7 +41,7 @@ private:
     // --------------------------
     void inferenceLoop();                                // головний цикл потоку
     void processFrameImpl(std::shared_ptr<Frame> frame); // реальна обробка кадру ONNX
-    void parseYOLO(std::shared_ptr<Frame> frame);
+    void parseYOLO(std::shared_ptr<Frame> frame, const std::vector<int64_t>& output_shape);
     void parseDetectionsFromYOLO(); // конвертує inference_result у detections
 
     // --------------------------
