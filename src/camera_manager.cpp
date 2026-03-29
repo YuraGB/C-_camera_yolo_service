@@ -131,5 +131,7 @@ void CameraManager::enqueueFrame(std::shared_ptr<Frame> frame, CameraInfo& cam) 
 std::shared_ptr<Frame> CameraManager::dequeueFrame(CameraInfo& cam) {
     std::lock_guard<std::mutex> lock(cam.queue_mutex);
     if (cam.frame_queue.empty()) return nullptr;
-    return cam.frame_queue.back();
+    auto frame = cam.frame_queue.back();
+    cam.frame_queue.clear();
+    return frame;
 }

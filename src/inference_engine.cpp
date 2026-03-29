@@ -109,6 +109,10 @@ std::shared_ptr<Frame> InferenceEngine::getResult() {
     if (output_queue_.empty())
         return nullptr;
 
+    while (output_queue_.size() > 1) {
+        output_queue_.pop();
+    }
+
     auto frame = output_queue_.front();
     output_queue_.pop();
 
