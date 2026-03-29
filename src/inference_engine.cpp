@@ -6,8 +6,17 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <winver.h>
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
 #endif
 
 #if defined(__has_include)
