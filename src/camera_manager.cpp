@@ -97,8 +97,6 @@ void CameraManager::captureLoop(const std::string& camera_id) {
             continue;
         }
 
-        cv::cvtColor(mat, mat, cv::COLOR_BGR2RGB);
-
         auto frame = std::make_shared<Frame>(
             camera_id,
             frame_id++,
