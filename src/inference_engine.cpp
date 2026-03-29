@@ -118,6 +118,37 @@ void logLoadedModuleVersion(const wchar_t* module_name, const char* label) {
         std::cout << "[ONNX] " << label << " module version: " << version << std::endl;
     }
 }
+
+using AppendExecutionProviderDeviceFn = OrtStatus*(ORT_API_CALL*)(OrtSessionOptions*, int);
+
+bool appendProviderBySymbol(HMODULE ort_module,
+                            const char* symbol_name,
+                            const char* provider_label,
+                            OrtSessionOptions* session_options,
+                            int device_id,
+                            std::string& error_message) {
+    if (!ort_module) {
+        error_message = "onnxruntime.dll is not loaded";
+        return false;
+    }
+
+    auto append_fn = reinterpret_cast<AppendExecutionProviderDeviceFn>(
+        GetProcAddress(ort_module, symbol_name)
+    );
+    if (!append_fn) {
+        error_message = std::string(symbol_name) + " export is not available";
+        return false;
+    }
+
+    OrtStatus* status = append_fn(session_options, device_id);
+    if (!status) {
+        return true;
+    }
+
+    error_message = Ort::GetApi().GetErrorMessage(status);
+    Ort::GetApi().ReleaseStatus(status);
+    return false;
+}
 #endif
 
 void logProviders(const std::vector<std::string>& providers) {
@@ -210,6 +241,22 @@ void InferenceEngine::configureExecutionProvider() {
     const auto providers = Ort::GetAvailableProviders();
     logProviders(providers);
 
+#if !defined(HAS_ORT_CUDA_PROVIDER)
+    std::cout << "[ONNX] CUDA provider factory header was not available at compile time; "
+                 "using runtime symbol lookup fallback if possible." << std::endl;
+#endif
+#if !defined(HAS_ORT_DML_PROVIDER)
+    std::cout << "[ONNX] DML provider factory header was not available at compile time; "
+                 "using runtime symbol lookup fallback if possible." << std::endl;
+#endif
+
+#ifdef _WIN32
+    HMODULE ort_module = GetModuleHandleW(L"onnxruntime.dll");
+    if (!ort_module) {
+        std::cout << "[ONNX] onnxruntime.dll module is not currently loaded during provider configuration" << std::endl;
+    }
+#endif
+
 #if defined(HAS_ORT_CUDA_PROVIDER)
     if (!gpu_enabled && hasProvider(providers, "CUDAExecutionProvider")) {
         try {
@@ -230,6 +277,27 @@ void InferenceEngine::configureExecutionProvider() {
     }
 #endif
 
+#ifdef _WIN32
+    if (!gpu_enabled && hasProvider(providers, "CUDAExecutionProvider")) {
+        std::string error_message;
+        std::cout << "[ONNX] Attempting to enable CUDAExecutionProvider via runtime symbol lookup" << std::endl;
+        if (appendProviderBySymbol(
+                ort_module,
+                "OrtSessionOptionsAppendExecutionProvider_CUDA",
+                "CUDAExecutionProvider",
+                session_options_,
+                0,
+                error_message)) {
+            selected_execution_provider_ = "CUDAExecutionProvider";
+            std::cout << "[ONNX] CUDAExecutionProvider enabled via runtime symbol lookup" << std::endl;
+            gpu_enabled = true;
+        } else {
+            std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider via runtime symbol lookup: "
+                      << error_message << std::endl;
+        }
+    }
+#endif
+
 #if defined(HAS_ORT_DML_PROVIDER)
     if (!gpu_enabled && hasProvider(providers, "DmlExecutionProvider")) {
         try {
@@ -244,6 +312,27 @@ void InferenceEngine::configureExecutionProvider() {
         } catch (const std::exception& e) {
             std::cerr << "[ONNX] Failed to enable DmlExecutionProvider: "
                       << e.what() << std::endl;
+        }
+    }
+#endif
+
+#ifdef _WIN32
+    if (!gpu_enabled && hasProvider(providers, "DmlExecutionProvider")) {
+        std::string error_message;
+        std::cout << "[ONNX] Attempting to enable DmlExecutionProvider via runtime symbol lookup" << std::endl;
+        if (appendProviderBySymbol(
+                ort_module,
+                "OrtSessionOptionsAppendExecutionProvider_DML",
+                "DmlExecutionProvider",
+                session_options_,
+                0,
+                error_message)) {
+            selected_execution_provider_ = "DmlExecutionProvider";
+            std::cout << "[ONNX] DmlExecutionProvider enabled via runtime symbol lookup" << std::endl;
+            gpu_enabled = true;
+        } else {
+            std::cerr << "[ONNX] Failed to enable DmlExecutionProvider via runtime symbol lookup: "
+                      << error_message << std::endl;
         }
     }
 #endif
