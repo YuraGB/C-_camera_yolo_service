@@ -139,6 +139,9 @@ void GRPCServer::stop()
 void GRPCServer::sendDetectionResult(std::shared_ptr<Frame> frame)
 {
     if (service_ && frame) {
+        if (frame->jpeg.empty() && !frame->mat.empty()) {
+            frame->encodeJPEG(90);
+        }
         service_->enqueueFrame(frame);
     }
 }

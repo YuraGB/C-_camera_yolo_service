@@ -6,6 +6,7 @@
 #include <csignal>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include <opencv2/opencv.hpp>
 
 #include "inference_engine.h"
@@ -107,6 +108,7 @@ int main() {
     // Основний цикл обробки
     // ------------------------------
     int64_t global_frame_counter = 0; // числовий лічильник кадрів
+    std::unordered_map<std::string, std::vector<Detection>> latest_detections;
 
 
     // auto fake_frame = std::make_shared<Frame>();
@@ -126,6 +128,10 @@ int main() {
     while (g_running) {
         auto processFrames = [&](const std::vector<std::string>& ids) {
             for (const auto& id : ids) {
+                if (auto result = inference_engine.getResult()) {
+                    latest_detections[result->camera_id] = result->detections;
+                }
+
                 auto frame = camera_manager.getLatestFrame(id);
                 if (!frame) continue;
 
@@ -138,12 +144,20 @@ int main() {
                 ).count();
 
                 inference_engine.processFrame(frame);
-                auto result = inference_engine.getResult();
-                if (result) {
-                    grpc_server.sendDetectionResult(result);
-                } else {
-                    // std::cout << "[DEBUG] No inference result available for " << id << std::endl;
+
+                auto stream_frame = std::make_shared<Frame>(
+                    frame->camera_id,
+                    frame->frame_id,
+                    frame->timestamp,
+                    frame->mat
+                );
+
+                auto it = latest_detections.find(id);
+                if (it != latest_detections.end()) {
+                    stream_frame->detections = it->second;
                 }
+
+                grpc_server.sendDetectionResult(stream_frame);
             }
         };
 
