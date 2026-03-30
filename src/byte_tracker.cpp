@@ -598,10 +598,14 @@ cv::Rect2f ByteTracker::predictedRectForDisplay(const Track& track,
     cv::Mat state = track.kalman_filter.statePost.clone();
     state.at<float>(0, 0) += state.at<float>(4, 0) * elapsed_steps;
     state.at<float>(1, 0) += state.at<float>(5, 0) * elapsed_steps;
-    state.at<float>(2, 0) += state.at<float>(6, 0) * elapsed_steps;
-    state.at<float>(3, 0) += state.at<float>(7, 0) * elapsed_steps;
 
-    return measurementToRect(state.rowRange(0, 4));
+    cv::Rect2f rect = measurementToRect(state.rowRange(0, 4));
+    rect.width = track.rect.width;
+    rect.height = track.rect.height;
+    rect.x = state.at<float>(0, 0) - (rect.width * 0.5f);
+    rect.y = state.at<float>(1, 0) - (rect.height * 0.5f);
+
+    return sanitizeRect(rect);
 }
 
 void ByteTracker::applyVisualTracking(const cv::Mat& gray_frame, int64_t timestamp_ms) {
@@ -693,6 +697,8 @@ void ByteTracker::syncTrackStateToRect(const TrackPtr& track) const {
     track->kalman_filter.statePost.at<float>(1, 0) = measurement.at<float>(1, 0);
     track->kalman_filter.statePost.at<float>(2, 0) = measurement.at<float>(2, 0);
     track->kalman_filter.statePost.at<float>(3, 0) = measurement.at<float>(3, 0);
+    track->kalman_filter.statePost.at<float>(6, 0) = 0.0f;
+    track->kalman_filter.statePost.at<float>(7, 0) = 0.0f;
 }
 
 float ByteTracker::median(std::vector<float>& values) {
