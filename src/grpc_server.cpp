@@ -1,48 +1,42 @@
 #include "grpc_server.h"
-#include <thread>
+
 #include <chrono>
 #include <iostream>
+#include <thread>
 
-// ------------------------------
-// Конструктор / Деструктор DetectionServiceImpl
-// ------------------------------
-DetectionServiceImpl::DetectionServiceImpl()
-    : MAX_QUEUE(30) // обмеження черги
-{
-}
+DetectionServiceImpl::DetectionServiceImpl() = default;
 
 DetectionServiceImpl::~DetectionServiceImpl() {
     notifyAll();
 }
 
-// ------------------------------
-// Реалізація StreamDetections
-// ------------------------------
 grpc::Status DetectionServiceImpl::StreamDetections(
     grpc::ServerContext* context,
     const google::protobuf::Empty* /*request*/,
     grpc::ServerWriter<detection::Frame>* writer)
 {
-    std::cout << "[gRPC] StreamDetections запущено" << std::endl;
+    std::cout << "[gRPC] StreamDetections started" << std::endl;
+
+    uint64_t last_seen_sequence = 0;
+    auto last_send = std::chrono::steady_clock::now();
+    constexpr auto kFrameDelay = std::chrono::milliseconds(1000 / 60);
 
     while (!context->IsCancelled()) {
         std::shared_ptr<Frame> frame_ptr;
 
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
-            if (frame_queue_.empty()) {
-                queue_cv_.wait_for(lock, std::chrono::milliseconds(100), [this, context]{
-                    return !frame_queue_.empty() || context->IsCancelled();
-                });
+            queue_cv_.wait_for(lock, std::chrono::milliseconds(100), [this, context, last_seen_sequence] {
+                return context->IsCancelled() || latest_frame_sequence_ > last_seen_sequence;
+            });
+
+            if (context->IsCancelled() || latest_frame_sequence_ <= last_seen_sequence || !latest_frame_) {
+                continue;
             }
 
-            if (frame_queue_.empty() || context->IsCancelled()) continue;
-
-            frame_ptr = frame_queue_.front();
-            frame_queue_.pop();
+            frame_ptr = latest_frame_;
+            last_seen_sequence = latest_frame_sequence_;
         }
-
-        if (!frame_ptr) continue;
 
         detection::Frame proto_frame;
         proto_frame.set_frame_id(static_cast<int32_t>(frame_ptr->frame_id));
@@ -65,18 +59,11 @@ grpc::Status DetectionServiceImpl::StreamDetections(
             proto_bbox->set_height(det.bbox.height);
         }
 
-        // Регулюємо FPS стріму, щоб не перевантажувати клієнта
-        static auto last_send = std::chrono::steady_clock::now();
-        const int TARGET_FPS = 60;
-        const auto frame_delay = std::chrono::milliseconds(1000 / TARGET_FPS);
-
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = now - last_send;
-
-        if (elapsed < frame_delay) {
-            std::this_thread::sleep_for(frame_delay - elapsed);
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = now - last_send;
+        if (elapsed < kFrameDelay) {
+            std::this_thread::sleep_for(kFrameDelay - elapsed);
         }
-
         last_send = std::chrono::steady_clock::now();
 
         if (!writer->Write(proto_frame)) {
@@ -85,46 +72,33 @@ grpc::Status DetectionServiceImpl::StreamDetections(
         }
     }
 
-    std::cout << "[gRPC] StreamDetections завершено" << std::endl;
+    std::cout << "[gRPC] StreamDetections finished" << std::endl;
     return grpc::Status::OK;
 }
 
-// ------------------------------
-// Додавання кадру в чергу
-// ------------------------------
 void DetectionServiceImpl::enqueueFrame(std::shared_ptr<Frame> frame)
 {
-    if (!frame) return;
-
-    std::unique_lock<std::mutex> lock(queue_mutex_);
-    if (frame_queue_.size() >= MAX_QUEUE) {
-        frame_queue_.pop(); // видаляємо найстаріший
+    if (!frame) {
+        return;
     }
 
-    frame_queue_.push(frame);
-    queue_cv_.notify_one();
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    latest_frame_ = std::move(frame);
+    ++latest_frame_sequence_;
+    queue_cv_.notify_all();
 }
 
-// ------------------------------
-// Геттер для розміру черги
-// ------------------------------
 size_t DetectionServiceImpl::getQueueSize()
 {
-    std::unique_lock<std::mutex> lock(queue_mutex_);
-    return frame_queue_.size();
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    return latest_frame_ ? 1 : 0;
 }
 
-// ------------------------------
-// Пробудження всіх потоків
-// ------------------------------
 void DetectionServiceImpl::notifyAll()
 {
     queue_cv_.notify_all();
 }
 
-// ------------------------------
-// GRPCServer реалізація
-// ------------------------------
 GRPCServer::GRPCServer(const std::string& server_address)
     : server_address_(server_address), running_(false)
 {
@@ -143,36 +117,44 @@ void GRPCServer::start()
     builder.RegisterService(service_.get());
 
     server_ = builder.BuildAndStart();
-    if (!server_) throw std::runtime_error("Failed to start gRPC server");
+    if (!server_) {
+        throw std::runtime_error("Failed to start gRPC server");
+    }
     running_ = true;
 
-    std::cout << "[gRPC] Сервер запущено на " << server_address_ << std::endl;
+    std::cout << "[gRPC] Server started on " << server_address_ << std::endl;
 
     server_thread_ = std::thread([this]() {
-        if (server_) server_->Wait();
+        if (server_) {
+            server_->Wait();
+        }
     });
 }
 
 void GRPCServer::stop()
 {
     if (running_) {
-        if (server_) server_->Shutdown();
-        if (service_) service_->notifyAll();
+        if (server_) {
+            server_->Shutdown();
+        }
+        if (service_) {
+            service_->notifyAll();
+        }
 
-        if (server_thread_.joinable())
+        if (server_thread_.joinable()) {
             server_thread_.join();
+        }
 
         running_ = false;
-        std::cout << "[gRPC] Сервер зупинено, кадрів у черзі="
+        std::cout << "[gRPC] Server stopped, buffered frame count="
                   << (service_ ? service_->getQueueSize() : 0) << std::endl;
     }
 }
 
 void GRPCServer::sendDetectionResult(std::shared_ptr<Frame> frame)
 {
-    if (service_ && !frame->mat.empty()) {
-        frame->parseDetectionsFromYOLO(); // конвертуємо inference_result у detections
-        frame->encodeJPEG(90);            // конвертуємо кадр у JPEG
-        service_->enqueueFrame(frame);    // додаємо в чергу
+    if (service_ && frame && !frame->mat.empty()) {
+        frame->encodeJPEG(90);
+        service_->enqueueFrame(std::move(frame));
     }
 }

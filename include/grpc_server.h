@@ -3,9 +3,9 @@
 #include <memory>
 #include <string>
 #include <mutex>
-#include <queue>
 #include <condition_variable>
 #include <atomic>
+#include <cstdint>
 #include "frame.h"
 
 // Підключаємо згенеровані файли protobuf/grpc
@@ -37,8 +37,8 @@ public:
 private:
     std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
-    std::queue<std::shared_ptr<Frame>> frame_queue_;
-    const size_t MAX_QUEUE;
+    std::shared_ptr<Frame> latest_frame_;
+    uint64_t latest_frame_sequence_ = 0;
 };
 
 // ------------------------------
