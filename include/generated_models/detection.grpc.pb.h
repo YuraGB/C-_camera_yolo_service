@@ -28,220 +28,187 @@
 
 namespace detection {
 
-// ---------------------
-// gRPC сервіс
-// ---------------------
 class DetectionService final {
  public:
   static constexpr char const* service_full_name() {
     return "detection.DetectionService";
   }
+
   class StubInterface {
    public:
     virtual ~StubInterface() {}
-    // ✅ ТІЛЬКИ читання стріму (те що тобі зараз треба)
-    std::unique_ptr< ::grpc::ClientReaderInterface< ::detection::Frame>> StreamDetections(::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
-      return std::unique_ptr< ::grpc::ClientReaderInterface< ::detection::Frame>>(StreamDetectionsRaw(context, request));
+
+    std::unique_ptr<::grpc::ClientReaderInterface<::detection::Frame>> StreamLiveFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
+      return std::unique_ptr<::grpc::ClientReaderInterface<::detection::Frame>>(
+          StreamLiveFramesRaw(context, request));
     }
-    std::unique_ptr< ::grpc::ClientAsyncReaderInterface< ::detection::Frame>> AsyncStreamDetections(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq, void* tag) {
-      return std::unique_ptr< ::grpc::ClientAsyncReaderInterface< ::detection::Frame>>(AsyncStreamDetectionsRaw(context, request, cq, tag));
+    std::unique_ptr<::grpc::ClientAsyncReaderInterface<::detection::Frame>> AsyncStreamLiveFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq, void* tag) {
+      return std::unique_ptr<::grpc::ClientAsyncReaderInterface<::detection::Frame>>(
+          AsyncStreamLiveFramesRaw(context, request, cq, tag));
     }
-    std::unique_ptr< ::grpc::ClientAsyncReaderInterface< ::detection::Frame>> PrepareAsyncStreamDetections(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq) {
-      return std::unique_ptr< ::grpc::ClientAsyncReaderInterface< ::detection::Frame>>(PrepareAsyncStreamDetectionsRaw(context, request, cq));
+    std::unique_ptr<::grpc::ClientAsyncReaderInterface<::detection::Frame>> PrepareAsyncStreamLiveFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr<::grpc::ClientAsyncReaderInterface<::detection::Frame>>(
+          PrepareAsyncStreamLiveFramesRaw(context, request, cq));
     }
+
+    std::unique_ptr<::grpc::ClientReaderInterface<::detection::Frame>> StreamDetectionFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
+      return std::unique_ptr<::grpc::ClientReaderInterface<::detection::Frame>>(
+          StreamDetectionFramesRaw(context, request));
+    }
+    std::unique_ptr<::grpc::ClientAsyncReaderInterface<::detection::Frame>> AsyncStreamDetectionFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq, void* tag) {
+      return std::unique_ptr<::grpc::ClientAsyncReaderInterface<::detection::Frame>>(
+          AsyncStreamDetectionFramesRaw(context, request, cq, tag));
+    }
+    std::unique_ptr<::grpc::ClientAsyncReaderInterface<::detection::Frame>> PrepareAsyncStreamDetectionFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr<::grpc::ClientAsyncReaderInterface<::detection::Frame>>(
+          PrepareAsyncStreamDetectionFramesRaw(context, request, cq));
+    }
+
     class async_interface {
      public:
       virtual ~async_interface() {}
-      // ✅ ТІЛЬКИ читання стріму (те що тобі зараз треба)
-      virtual void StreamDetections(::grpc::ClientContext* context, const ::google::protobuf::Empty* request, ::grpc::ClientReadReactor< ::detection::Frame>* reactor) = 0;
+      virtual void StreamLiveFrames(::grpc::ClientContext* context, const ::google::protobuf::Empty* request,
+                                    ::grpc::ClientReadReactor<::detection::Frame>* reactor) = 0;
+      virtual void StreamDetectionFrames(::grpc::ClientContext* context, const ::google::protobuf::Empty* request,
+                                         ::grpc::ClientReadReactor<::detection::Frame>* reactor) = 0;
     };
+
     typedef class async_interface experimental_async_interface;
     virtual class async_interface* async() { return nullptr; }
     class async_interface* experimental_async() { return async(); }
+
    private:
-    virtual ::grpc::ClientReaderInterface< ::detection::Frame>* StreamDetectionsRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request) = 0;
-    virtual ::grpc::ClientAsyncReaderInterface< ::detection::Frame>* AsyncStreamDetectionsRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq, void* tag) = 0;
-    virtual ::grpc::ClientAsyncReaderInterface< ::detection::Frame>* PrepareAsyncStreamDetectionsRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientReaderInterface<::detection::Frame>* StreamLiveFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) = 0;
+    virtual ::grpc::ClientAsyncReaderInterface<::detection::Frame>* AsyncStreamLiveFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq, void* tag) = 0;
+    virtual ::grpc::ClientAsyncReaderInterface<::detection::Frame>* PrepareAsyncStreamLiveFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq) = 0;
+
+    virtual ::grpc::ClientReaderInterface<::detection::Frame>* StreamDetectionFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) = 0;
+    virtual ::grpc::ClientAsyncReaderInterface<::detection::Frame>* AsyncStreamDetectionFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq, void* tag) = 0;
+    virtual ::grpc::ClientAsyncReaderInterface<::detection::Frame>* PrepareAsyncStreamDetectionFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq) = 0;
   };
+
   class Stub final : public StubInterface {
    public:
-    Stub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options = ::grpc::StubOptions());
-    std::unique_ptr< ::grpc::ClientReader< ::detection::Frame>> StreamDetections(::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
-      return std::unique_ptr< ::grpc::ClientReader< ::detection::Frame>>(StreamDetectionsRaw(context, request));
+    Stub(const std::shared_ptr<::grpc::ChannelInterface>& channel,
+         const ::grpc::StubOptions& options = ::grpc::StubOptions());
+
+    std::unique_ptr<::grpc::ClientReader<::detection::Frame>> StreamLiveFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
+      return std::unique_ptr<::grpc::ClientReader<::detection::Frame>>(
+          StreamLiveFramesRaw(context, request));
     }
-    std::unique_ptr< ::grpc::ClientAsyncReader< ::detection::Frame>> AsyncStreamDetections(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq, void* tag) {
-      return std::unique_ptr< ::grpc::ClientAsyncReader< ::detection::Frame>>(AsyncStreamDetectionsRaw(context, request, cq, tag));
+    std::unique_ptr<::grpc::ClientAsyncReader<::detection::Frame>> AsyncStreamLiveFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq, void* tag) {
+      return std::unique_ptr<::grpc::ClientAsyncReader<::detection::Frame>>(
+          AsyncStreamLiveFramesRaw(context, request, cq, tag));
     }
-    std::unique_ptr< ::grpc::ClientAsyncReader< ::detection::Frame>> PrepareAsyncStreamDetections(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq) {
-      return std::unique_ptr< ::grpc::ClientAsyncReader< ::detection::Frame>>(PrepareAsyncStreamDetectionsRaw(context, request, cq));
+    std::unique_ptr<::grpc::ClientAsyncReader<::detection::Frame>> PrepareAsyncStreamLiveFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr<::grpc::ClientAsyncReader<::detection::Frame>>(
+          PrepareAsyncStreamLiveFramesRaw(context, request, cq));
     }
-    class async final :
-      public StubInterface::async_interface {
+
+    std::unique_ptr<::grpc::ClientReader<::detection::Frame>> StreamDetectionFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
+      return std::unique_ptr<::grpc::ClientReader<::detection::Frame>>(
+          StreamDetectionFramesRaw(context, request));
+    }
+    std::unique_ptr<::grpc::ClientAsyncReader<::detection::Frame>> AsyncStreamDetectionFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq, void* tag) {
+      return std::unique_ptr<::grpc::ClientAsyncReader<::detection::Frame>>(
+          AsyncStreamDetectionFramesRaw(context, request, cq, tag));
+    }
+    std::unique_ptr<::grpc::ClientAsyncReader<::detection::Frame>> PrepareAsyncStreamDetectionFrames(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr<::grpc::ClientAsyncReader<::detection::Frame>>(
+          PrepareAsyncStreamDetectionFramesRaw(context, request, cq));
+    }
+
+    class async final : public StubInterface::async_interface {
      public:
-      void StreamDetections(::grpc::ClientContext* context, const ::google::protobuf::Empty* request, ::grpc::ClientReadReactor< ::detection::Frame>* reactor) override;
+      void StreamLiveFrames(::grpc::ClientContext* context, const ::google::protobuf::Empty* request,
+                            ::grpc::ClientReadReactor<::detection::Frame>* reactor) override;
+      void StreamDetectionFrames(::grpc::ClientContext* context, const ::google::protobuf::Empty* request,
+                                 ::grpc::ClientReadReactor<::detection::Frame>* reactor) override;
+
      private:
       friend class Stub;
-      explicit async(Stub* stub): stub_(stub) { }
-      Stub* stub() { return stub_; }
+      explicit async(Stub* stub) : stub_(stub) {}
       Stub* stub_;
     };
+
     class async* async() override { return &async_stub_; }
 
    private:
-    std::shared_ptr< ::grpc::ChannelInterface> channel_;
+    std::shared_ptr<::grpc::ChannelInterface> channel_;
     class async async_stub_{this};
-    ::grpc::ClientReader< ::detection::Frame>* StreamDetectionsRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request) override;
-    ::grpc::ClientAsyncReader< ::detection::Frame>* AsyncStreamDetectionsRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq, void* tag) override;
-    ::grpc::ClientAsyncReader< ::detection::Frame>* PrepareAsyncStreamDetectionsRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq) override;
-    const ::grpc::internal::RpcMethod rpcmethod_StreamDetections_;
+
+    ::grpc::ClientReader<::detection::Frame>* StreamLiveFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) override;
+    ::grpc::ClientAsyncReader<::detection::Frame>* AsyncStreamLiveFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq, void* tag) override;
+    ::grpc::ClientAsyncReader<::detection::Frame>* PrepareAsyncStreamLiveFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq) override;
+
+    ::grpc::ClientReader<::detection::Frame>* StreamDetectionFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) override;
+    ::grpc::ClientAsyncReader<::detection::Frame>* AsyncStreamDetectionFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq, void* tag) override;
+    ::grpc::ClientAsyncReader<::detection::Frame>* PrepareAsyncStreamDetectionFramesRaw(
+        ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
+        ::grpc::CompletionQueue* cq) override;
+
+    const ::grpc::internal::RpcMethod rpcmethod_StreamLiveFrames_;
+    const ::grpc::internal::RpcMethod rpcmethod_StreamDetectionFrames_;
   };
-  static std::unique_ptr<Stub> NewStub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options = ::grpc::StubOptions());
+
+  static std::unique_ptr<Stub> NewStub(
+      const std::shared_ptr<::grpc::ChannelInterface>& channel,
+      const ::grpc::StubOptions& options = ::grpc::StubOptions());
 
   class Service : public ::grpc::Service {
    public:
     Service();
     virtual ~Service();
-    // ✅ ТІЛЬКИ читання стріму (те що тобі зараз треба)
-    virtual ::grpc::Status StreamDetections(::grpc::ServerContext* context, const ::google::protobuf::Empty* request, ::grpc::ServerWriter< ::detection::Frame>* writer);
+
+    virtual ::grpc::Status StreamLiveFrames(::grpc::ServerContext* context,
+                                            const ::google::protobuf::Empty* request,
+                                            ::grpc::ServerWriter<::detection::Frame>* writer);
+    virtual ::grpc::Status StreamDetectionFrames(::grpc::ServerContext* context,
+                                                 const ::google::protobuf::Empty* request,
+                                                 ::grpc::ServerWriter<::detection::Frame>* writer);
   };
-  template <class BaseClass>
-  class WithAsyncMethod_StreamDetections : public BaseClass {
-   private:
-    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
-   public:
-    WithAsyncMethod_StreamDetections() {
-      ::grpc::Service::MarkMethodAsync(0);
-    }
-    ~WithAsyncMethod_StreamDetections() override {
-      BaseClassMustBeDerivedFromService(this);
-    }
-    // disable synchronous version of this method
-    ::grpc::Status StreamDetections(::grpc::ServerContext* /*context*/, const ::google::protobuf::Empty* /*request*/, ::grpc::ServerWriter< ::detection::Frame>* /*writer*/) override {
-      abort();
-      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
-    }
-    void RequestStreamDetections(::grpc::ServerContext* context, ::google::protobuf::Empty* request, ::grpc::ServerAsyncWriter< ::detection::Frame>* writer, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
-      ::grpc::Service::RequestAsyncServerStreaming(0, context, request, writer, new_call_cq, notification_cq, tag);
-    }
-  };
-  typedef WithAsyncMethod_StreamDetections<Service > AsyncService;
-  template <class BaseClass>
-  class WithCallbackMethod_StreamDetections : public BaseClass {
-   private:
-    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
-   public:
-    WithCallbackMethod_StreamDetections() {
-      ::grpc::Service::MarkMethodCallback(0,
-          new ::grpc::internal::CallbackServerStreamingHandler< ::google::protobuf::Empty, ::detection::Frame>(
-            [this](
-                   ::grpc::CallbackServerContext* context, const ::google::protobuf::Empty* request) { return this->StreamDetections(context, request); }));
-    }
-    ~WithCallbackMethod_StreamDetections() override {
-      BaseClassMustBeDerivedFromService(this);
-    }
-    // disable synchronous version of this method
-    ::grpc::Status StreamDetections(::grpc::ServerContext* /*context*/, const ::google::protobuf::Empty* /*request*/, ::grpc::ServerWriter< ::detection::Frame>* /*writer*/) override {
-      abort();
-      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
-    }
-    virtual ::grpc::ServerWriteReactor< ::detection::Frame>* StreamDetections(
-      ::grpc::CallbackServerContext* /*context*/, const ::google::protobuf::Empty* /*request*/)  { return nullptr; }
-  };
-  typedef WithCallbackMethod_StreamDetections<Service > CallbackService;
-  typedef CallbackService ExperimentalCallbackService;
-  template <class BaseClass>
-  class WithGenericMethod_StreamDetections : public BaseClass {
-   private:
-    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
-   public:
-    WithGenericMethod_StreamDetections() {
-      ::grpc::Service::MarkMethodGeneric(0);
-    }
-    ~WithGenericMethod_StreamDetections() override {
-      BaseClassMustBeDerivedFromService(this);
-    }
-    // disable synchronous version of this method
-    ::grpc::Status StreamDetections(::grpc::ServerContext* /*context*/, const ::google::protobuf::Empty* /*request*/, ::grpc::ServerWriter< ::detection::Frame>* /*writer*/) override {
-      abort();
-      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
-    }
-  };
-  template <class BaseClass>
-  class WithRawMethod_StreamDetections : public BaseClass {
-   private:
-    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
-   public:
-    WithRawMethod_StreamDetections() {
-      ::grpc::Service::MarkMethodRaw(0);
-    }
-    ~WithRawMethod_StreamDetections() override {
-      BaseClassMustBeDerivedFromService(this);
-    }
-    // disable synchronous version of this method
-    ::grpc::Status StreamDetections(::grpc::ServerContext* /*context*/, const ::google::protobuf::Empty* /*request*/, ::grpc::ServerWriter< ::detection::Frame>* /*writer*/) override {
-      abort();
-      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
-    }
-    void RequestStreamDetections(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncWriter< ::grpc::ByteBuffer>* writer, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
-      ::grpc::Service::RequestAsyncServerStreaming(0, context, request, writer, new_call_cq, notification_cq, tag);
-    }
-  };
-  template <class BaseClass>
-  class WithRawCallbackMethod_StreamDetections : public BaseClass {
-   private:
-    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
-   public:
-    WithRawCallbackMethod_StreamDetections() {
-      ::grpc::Service::MarkMethodRawCallback(0,
-          new ::grpc::internal::CallbackServerStreamingHandler< ::grpc::ByteBuffer, ::grpc::ByteBuffer>(
-            [this](
-                   ::grpc::CallbackServerContext* context, const::grpc::ByteBuffer* request) { return this->StreamDetections(context, request); }));
-    }
-    ~WithRawCallbackMethod_StreamDetections() override {
-      BaseClassMustBeDerivedFromService(this);
-    }
-    // disable synchronous version of this method
-    ::grpc::Status StreamDetections(::grpc::ServerContext* /*context*/, const ::google::protobuf::Empty* /*request*/, ::grpc::ServerWriter< ::detection::Frame>* /*writer*/) override {
-      abort();
-      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
-    }
-    virtual ::grpc::ServerWriteReactor< ::grpc::ByteBuffer>* StreamDetections(
-      ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/)  { return nullptr; }
-  };
-  typedef Service StreamedUnaryService;
-  template <class BaseClass>
-  class WithSplitStreamingMethod_StreamDetections : public BaseClass {
-   private:
-    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
-   public:
-    WithSplitStreamingMethod_StreamDetections() {
-      ::grpc::Service::MarkMethodStreamed(0,
-        new ::grpc::internal::SplitServerStreamingHandler<
-          ::google::protobuf::Empty, ::detection::Frame>(
-            [this](::grpc::ServerContext* context,
-                   ::grpc::ServerSplitStreamer<
-                     ::google::protobuf::Empty, ::detection::Frame>* streamer) {
-                       return this->StreamedStreamDetections(context,
-                         streamer);
-                  }));
-    }
-    ~WithSplitStreamingMethod_StreamDetections() override {
-      BaseClassMustBeDerivedFromService(this);
-    }
-    // disable regular version of this method
-    ::grpc::Status StreamDetections(::grpc::ServerContext* /*context*/, const ::google::protobuf::Empty* /*request*/, ::grpc::ServerWriter< ::detection::Frame>* /*writer*/) override {
-      abort();
-      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
-    }
-    // replace default version of method with split streamed
-    virtual ::grpc::Status StreamedStreamDetections(::grpc::ServerContext* context, ::grpc::ServerSplitStreamer< ::google::protobuf::Empty,::detection::Frame>* server_split_streamer) = 0;
-  };
-  typedef WithSplitStreamingMethod_StreamDetections<Service > SplitStreamedService;
-  typedef WithSplitStreamingMethod_StreamDetections<Service > StreamedService;
 };
 
 }  // namespace detection
 
-
 #include <grpcpp/ports_undef.inc>
+
 #endif  // GRPC_detection_2eproto__INCLUDED

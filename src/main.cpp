@@ -88,12 +88,12 @@ std::filesystem::path resolveExistingPath(const std::string& raw_path) {
     return input;
 }
 
-void drainResults(
+void drainDetectionResults(
     InferenceEngine& inference_engine,
     GRPCServer& grpc_server)
 {
     while (auto result = inference_engine.getResult()) {
-        grpc_server.sendDetectionResult(std::move(result));
+        grpc_server.sendDetectionResult(result);
     }
 }
 }
@@ -191,38 +191,40 @@ int main() {
         int64_t global_frame_counter = 0;
 
         while (g_running) {
-            bool processed_any_frame = false;
+            bool captured_any_frame = false;
 
             auto processFrames = [&](const std::vector<std::string>& ids) {
                 for (const auto& id : ids) {
-                    drainResults(inference_engine, grpc_server);
+                    drainDetectionResults(inference_engine, grpc_server);
 
                     auto frame = camera_manager.getLatestFrame(id);
                     if (!frame) {
                         continue;
                     }
 
-                    processed_any_frame = true;
+                    captured_any_frame = true;
                     frame->camera_id = id;
                     frame->frame_id = global_frame_counter++;
                     frame->timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()
                     ).count();
 
+                    grpc_server.sendLiveFrame(frame);
                     inference_engine.processFrame(frame);
                 }
             };
 
             processFrames(camera_ids);
             processFrames(video_ids);
-            drainResults(inference_engine, grpc_server);
+            drainDetectionResults(inference_engine, grpc_server);
 
-            if (!processed_any_frame) {
+            if (!captured_any_frame) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
         }
 
         std::cout << "[INFO] Stopping services..." << std::endl;
+        drainDetectionResults(inference_engine, grpc_server);
         camera_manager.stopAllCameras();
         inference_engine.stop();
         grpc_server.stop();
