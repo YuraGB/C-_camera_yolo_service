@@ -5,7 +5,6 @@
 #include <csignal>
 #include <vector>
 #include <string>
-#include <unordered_map>
 #include <filesystem>
 #include <stdexcept>
 
@@ -91,10 +90,10 @@ std::filesystem::path resolveExistingPath(const std::string& raw_path) {
 
 void drainResults(
     InferenceEngine& inference_engine,
-    std::unordered_map<std::string, std::vector<Detection>>& latest_detections)
+    GRPCServer& grpc_server)
 {
     while (auto result = inference_engine.getResult()) {
-        latest_detections[result->camera_id] = result->detections;
+        grpc_server.sendDetectionResult(std::move(result));
     }
 }
 }
@@ -190,14 +189,13 @@ int main() {
         std::cout << "[INFO] Service started. Processing frames..." << std::endl;
 
         int64_t global_frame_counter = 0;
-        std::unordered_map<std::string, std::vector<Detection>> latest_detections;
 
         while (g_running) {
             bool processed_any_frame = false;
 
             auto processFrames = [&](const std::vector<std::string>& ids) {
                 for (const auto& id : ids) {
-                    drainResults(inference_engine, latest_detections);
+                    drainResults(inference_engine, grpc_server);
 
                     auto frame = camera_manager.getLatestFrame(id);
                     if (!frame) {
@@ -212,26 +210,12 @@ int main() {
                     ).count();
 
                     inference_engine.processFrame(frame);
-
-                    auto stream_frame = std::make_shared<Frame>(
-                        frame->camera_id,
-                        frame->frame_id,
-                        frame->timestamp,
-                        frame->mat
-                    );
-
-                    auto it = latest_detections.find(id);
-                    if (it != latest_detections.end()) {
-                        stream_frame->detections = it->second;
-                    }
-
-                    grpc_server.sendDetectionResult(std::move(stream_frame));
                 }
             };
 
             processFrames(camera_ids);
             processFrames(video_ids);
-            drainResults(inference_engine, latest_detections);
+            drainResults(inference_engine, grpc_server);
 
             if (!processed_any_frame) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
