@@ -1,4 +1,5 @@
 #include <iostream>
+#include <algorithm>
 #include <thread>
 #include <chrono>
 #include <atomic>
@@ -30,6 +31,12 @@
 std::atomic<bool> g_running{true};
 
 namespace {
+struct LatestInferenceSnapshot {
+    int64_t frame_id = -1;
+    int64_t timestamp = 0;
+    std::vector<Detection> detections;
+};
+
 std::filesystem::path getExecutableDir() {
 #ifdef _WIN32
     std::wstring buffer(MAX_PATH, L'\0');
@@ -91,11 +98,36 @@ std::filesystem::path resolveExistingPath(const std::string& raw_path) {
 
 void drainResults(
     InferenceEngine& inference_engine,
-    std::unordered_map<std::string, std::vector<Detection>>& latest_detections)
+    std::unordered_map<std::string, LatestInferenceSnapshot>& latest_detections)
 {
     while (auto result = inference_engine.getResult()) {
-        latest_detections[result->camera_id] = result->detections;
+        latest_detections[result->camera_id] = LatestInferenceSnapshot{
+            result->frame_id,
+            result->timestamp,
+            result->detections
+        };
     }
+}
+
+std::vector<Detection> withLagMetadata(
+    const LatestInferenceSnapshot& snapshot,
+    int64_t current_frame_id,
+    int64_t current_timestamp)
+{
+    std::vector<Detection> detections = snapshot.detections;
+    if (snapshot.frame_id < 0 || snapshot.frame_id >= current_frame_id) {
+        return detections;
+    }
+
+    const auto frame_lag = current_frame_id - snapshot.frame_id;
+    const auto time_lag_ms = std::max<int64_t>(0, current_timestamp - snapshot.timestamp);
+    const auto suffix = " [lag " + std::to_string(frame_lag) + "f/" + std::to_string(time_lag_ms) + "ms]";
+
+    for (auto& detection : detections) {
+        detection.label += suffix;
+    }
+
+    return detections;
 }
 }
 
@@ -190,7 +222,7 @@ int main() {
         std::cout << "[INFO] Service started. Processing frames..." << std::endl;
 
         int64_t global_frame_counter = 0;
-        std::unordered_map<std::string, std::vector<Detection>> latest_detections;
+        std::unordered_map<std::string, LatestInferenceSnapshot> latest_detections;
 
         while (g_running) {
             bool processed_any_frame = false;
@@ -222,7 +254,8 @@ int main() {
 
                     auto it = latest_detections.find(id);
                     if (it != latest_detections.end()) {
-                        stream_frame->detections = it->second;
+                        stream_frame->detections =
+                            withLagMetadata(it->second, frame->frame_id, frame->timestamp);
                     }
 
                     grpc_server.sendDetectionResult(std::move(stream_frame));
