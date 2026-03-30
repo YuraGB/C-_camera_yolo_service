@@ -394,6 +394,10 @@ void InferenceEngine::configureExecutionProvider() {
 }
 
 void InferenceEngine::start() {
+    if (!session_) {
+        throw std::runtime_error("InferenceEngine is not ready: ONNX session initialization failed");
+    }
+
     running_ = true;
     inference_thread_ = std::thread(&InferenceEngine::inferenceLoop, this);
 }
@@ -406,8 +410,12 @@ void InferenceEngine::stop() {
         inference_thread_.join();
 }
 
+bool InferenceEngine::isReady() const {
+    return session_ != nullptr;
+}
+
 void InferenceEngine::processFrame(std::shared_ptr<Frame> frame) {
-    if (!frame) return;
+    if (!frame || !running_ || !session_) return;
 
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -462,13 +470,9 @@ void InferenceEngine::inferenceLoop() {
 }
 
 void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
-    if (!frame || frame->mat.empty()) return;
+    if (!frame || frame->mat.empty() || !session_) return;
 
     frame->detections.clear();
-
-    cv::Mat send_mat = frame->mat;
-    std::vector<int> jpeg_params = {cv::IMWRITE_JPEG_QUALITY, 90};
-    cv::imencode(".jpg", send_mat, frame->jpeg, jpeg_params);
 
     cv::Mat infer_mat;
     cv::resize(frame->mat, infer_mat, cv::Size(640, 640));

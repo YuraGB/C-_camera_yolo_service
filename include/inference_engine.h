@@ -21,6 +21,7 @@ public:
 
     void start();
     void stop();
+    bool isReady() const;
 
     void processFrame(std::shared_ptr<Frame> frame);
     std::shared_ptr<Frame> getResult();
