@@ -6,6 +6,8 @@
 #include <map>
 #include <utility>
 
+#include <opencv2/imgproc.hpp>
+
 #include "byte_tracker_lapjv.h"
 
 // Core tracking flow adapted from the MIT-licensed ByteTrack-cpp project.
@@ -15,6 +17,27 @@ ByteTracker::ByteTracker(Config config)
 
 void ByteTracker::advanceTo(int64_t timestamp_ms) {
     current_display_timestamp_ms_ = timestamp_ms;
+}
+
+void ByteTracker::observeFrame(const cv::Mat& frame, int64_t timestamp_ms) {
+    current_display_timestamp_ms_ = std::max(current_display_timestamp_ms_, timestamp_ms);
+    if (frame.empty()) {
+        return;
+    }
+
+    cv::Mat gray_frame;
+    if (frame.channels() == 1) {
+        gray_frame = frame.clone();
+    } else {
+        cv::cvtColor(frame, gray_frame, cv::COLOR_BGR2GRAY);
+    }
+
+    if (!previous_gray_frame_.empty() && timestamp_ms > previous_frame_timestamp_ms_) {
+        applyVisualTracking(gray_frame, timestamp_ms);
+    }
+
+    previous_gray_frame_ = gray_frame;
+    previous_frame_timestamp_ms_ = timestamp_ms;
 }
 
 void ByteTracker::updateWithDetections(const std::vector<Detection>& detections, int64_t timestamp_ms) {
@@ -579,4 +602,113 @@ cv::Rect2f ByteTracker::predictedRectForDisplay(const Track& track,
     state.at<float>(3, 0) += state.at<float>(7, 0) * elapsed_steps;
 
     return measurementToRect(state.rowRange(0, 4));
+}
+
+void ByteTracker::applyVisualTracking(const cv::Mat& gray_frame, int64_t timestamp_ms) {
+    const cv::Rect image_bounds(0, 0, previous_gray_frame_.cols, previous_gray_frame_.rows);
+
+    for (const auto& track : tracked_tracks_) {
+        if (!track->is_activated || track->state != TrackState::Tracked) {
+            continue;
+        }
+
+        const cv::Rect2f predicted_rect = predictedRectForDisplay(
+            *track,
+            timestamp_ms,
+            config_.max_display_prediction_steps);
+        const cv::Rect roi = (cv::Rect(cvRound(predicted_rect.x),
+                                       cvRound(predicted_rect.y),
+                                       cvRound(predicted_rect.width),
+                                       cvRound(predicted_rect.height)) & image_bounds);
+        if (roi.width < 8 || roi.height < 8) {
+            continue;
+        }
+
+        cv::Mat mask = cv::Mat::zeros(previous_gray_frame_.size(), CV_8UC1);
+        cv::rectangle(mask, roi, cv::Scalar(255), cv::FILLED);
+
+        std::vector<cv::Point2f> previous_points;
+        cv::goodFeaturesToTrack(
+            previous_gray_frame_,
+            previous_points,
+            config_.optical_flow_max_corners,
+            config_.optical_flow_quality_level,
+            config_.optical_flow_min_distance,
+            mask);
+
+        if (static_cast<int>(previous_points.size()) < config_.optical_flow_min_points) {
+            continue;
+        }
+
+        std::vector<cv::Point2f> current_points;
+        std::vector<unsigned char> status;
+        std::vector<float> errors;
+        cv::calcOpticalFlowPyrLK(
+            previous_gray_frame_,
+            gray_frame,
+            previous_points,
+            current_points,
+            status,
+            errors);
+
+        std::vector<float> dxs;
+        std::vector<float> dys;
+        dxs.reserve(previous_points.size());
+        dys.reserve(previous_points.size());
+        for (size_t i = 0; i < previous_points.size(); ++i) {
+            if (!status[i]) {
+                continue;
+            }
+            if (i < errors.size() && errors[i] > config_.optical_flow_max_error) {
+                continue;
+            }
+            dxs.push_back(current_points[i].x - previous_points[i].x);
+            dys.push_back(current_points[i].y - previous_points[i].y);
+        }
+
+        if (static_cast<int>(dxs.size()) < config_.optical_flow_min_points) {
+            continue;
+        }
+
+        const float median_dx = median(dxs);
+        const float median_dy = median(dys);
+        const float max_step = std::max(predicted_rect.width, predicted_rect.height) * config_.optical_flow_max_step_ratio;
+        if (std::abs(median_dx) > max_step || std::abs(median_dy) > max_step) {
+            continue;
+        }
+
+        track->rect = sanitizeRect({
+            predicted_rect.x + median_dx,
+            predicted_rect.y + median_dy,
+            predicted_rect.width,
+            predicted_rect.height
+        });
+        syncTrackStateToRect(track);
+    }
+}
+
+void ByteTracker::syncTrackStateToRect(const TrackPtr& track) const {
+    const cv::Mat measurement = rectToMeasurement(track->rect);
+    track->kalman_filter.statePost.at<float>(0, 0) = measurement.at<float>(0, 0);
+    track->kalman_filter.statePost.at<float>(1, 0) = measurement.at<float>(1, 0);
+    track->kalman_filter.statePost.at<float>(2, 0) = measurement.at<float>(2, 0);
+    track->kalman_filter.statePost.at<float>(3, 0) = measurement.at<float>(3, 0);
+}
+
+float ByteTracker::median(std::vector<float>& values) {
+    if (values.empty()) {
+        return 0.0f;
+    }
+
+    const auto middle = values.begin() + static_cast<std::ptrdiff_t>(values.size() / 2);
+    std::nth_element(values.begin(), middle, values.end());
+    float result = *middle;
+
+    if ((values.size() % 2) == 0) {
+        const auto lower_middle = values.begin() + static_cast<std::ptrdiff_t>((values.size() / 2) - 1);
+        std::nth_element(values.begin(), lower_middle, values.end());
+        result = (result + *lower_middle) * 0.5f;
+    }
+
+    return result;
 }

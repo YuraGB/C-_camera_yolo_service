@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include <opencv2/core/mat.hpp>
+#include <opencv2/core/types.hpp>
 #include <opencv2/video/tracking.hpp>
 
 #include "models/frame.h"
@@ -23,11 +25,18 @@ public:
         float min_box_area = 10.0f;
         float max_aspect_ratio = 8.0f;
         float max_display_prediction_steps = 2.0f;
+        int optical_flow_max_corners = 24;
+        double optical_flow_quality_level = 0.01;
+        double optical_flow_min_distance = 4.0;
+        float optical_flow_max_error = 20.0f;
+        int optical_flow_min_points = 6;
+        float optical_flow_max_step_ratio = 0.35f;
     };
 
     explicit ByteTracker(Config config = {});
 
     void advanceTo(int64_t timestamp_ms);
+    void observeFrame(const cv::Mat& frame, int64_t timestamp_ms);
     void updateWithDetections(const std::vector<Detection>& detections, int64_t timestamp_ms);
     std::vector<Detection> getTrackedDetections() const;
 
@@ -94,11 +103,16 @@ private:
     static cv::Rect2f predictedRectForDisplay(const Track& track,
                                               int64_t display_timestamp_ms,
                                               float max_prediction_steps);
+    void applyVisualTracking(const cv::Mat& gray_frame, int64_t timestamp_ms);
+    void syncTrackStateToRect(const TrackPtr& track) const;
+    static float median(std::vector<float>& values);
 
     Config config_;
     size_t frame_id_ = 0;
     int next_track_id_ = 1;
     int64_t current_display_timestamp_ms_ = 0;
+    cv::Mat previous_gray_frame_;
+    int64_t previous_frame_timestamp_ms_ = 0;
     std::vector<TrackPtr> tracked_tracks_;
     std::vector<TrackPtr> lost_tracks_;
     std::vector<TrackPtr> removed_tracks_;

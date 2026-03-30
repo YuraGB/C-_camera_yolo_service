@@ -31,7 +31,7 @@
 std::atomic<bool> g_running{true};
 
 namespace {
-constexpr int kDetectionIntervalFrames = 4;
+constexpr int kDetectionIntervalFrames = 2;
 
 struct CameraPipelineState {
     ByteTracker tracker;
@@ -222,6 +222,7 @@ int main() {
 
                     auto& pipeline_state = camera_states[id];
                     pipeline_state.tracker.advanceTo(frame->timestamp);
+                    pipeline_state.tracker.observeFrame(frame->mat, frame->timestamp);
 
                     grpc_server.sendLiveFrame(frame);
 
