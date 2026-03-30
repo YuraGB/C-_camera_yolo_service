@@ -146,16 +146,16 @@ const ::uint32_t
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_._has_bits_),
         8, // hasbit index offset
-        PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.camera_id_),
         PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.frame_id_),
         PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.timestamp_),
         PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.image_),
         PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.detections_),
-        2,
+        PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.camera_id_),
         4,
         3,
         1,
         0,
+        2,
 };
 
 static const ::_pbi::MigrationSchema
@@ -176,12 +176,14 @@ const char descriptor_table_protodef_detection_2eproto[] ABSL_ATTRIBUTE_SECTION_
     "y\030\002 \001(\005\022\r\n\005width\030\003 \001(\005\022\016\n\006height\030\004 \001(\005\"M"
     "\n\tDetection\022\r\n\005label\030\001 \001(\t\022\022\n\nconfidence"
     "\030\002 \001(\002\022\035\n\004bbox\030\003 \001(\0132\017.detection.BBox\"x\n"
-    "\005Frame\022\021\n\tcamera_id\030\005 \001(\t\022\020\n\010frame_id\030\001 "
-    "\001(\005\022\021\n\ttimestamp\030\002 \001(\003\022\r\n\005image\030\003 \001(\014\022(\n"
-    "\ndetections\030\004 \003(\0132\024.detection.Detection2"
-    "R\n\020DetectionService\022>\n\020StreamDetections\022"
-    "\026.google.protobuf.Empty\032\020.detection.Fram"
-    "e0\001b\006proto3"
+    "\005Frame\022\020\n\010frame_id\030\001 \001(\005\022\021\n\ttimestamp\030\002 "
+    "\001(\003\022\r\n\005image\030\003 \001(\014\022(\n\ndetections\030\004 \003(\0132\024"
+    ".detection.Detection\022\021\n\tcamera_id\030\005 \001(\t2"
+    "\227\001\n\020DetectionService\022>\n\020StreamLiveFrames"
+    "\022\026.google.protobuf.Empty\032\020.detection.Fra"
+    "me0\001\022C\n\025StreamDetectionFrames\022\026.google.p"
+    "rotobuf.Empty\032\020.detection.Frame0\001b\006proto"
+    "3"
 };
 static const ::_pbi::DescriptorTable* PROTOBUF_NONNULL const
     descriptor_table_detection_2eproto_deps[1] = {
@@ -191,7 +193,7 @@ static ::absl::once_flag descriptor_table_detection_2eproto_once;
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_detection_2eproto = {
     false,
     false,
-    411,
+    481,
     descriptor_table_protodef_detection_2eproto,
     "detection.proto",
     &descriptor_table_detection_2eproto_once,

@@ -1096,71 +1096,6 @@ inline void Detection::set_allocated_bbox(::detection::BBox* PROTOBUF_NULLABLE v
 
 // Frame
 
-// string camera_id = 5;
-inline void Frame::clear_camera_id() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.camera_id_.ClearToEmpty();
-  ClearHasBit(_impl_._has_bits_[0],
-                  0x00000004U);
-}
-inline const ::std::string& Frame::camera_id() const
-    ABSL_ATTRIBUTE_LIFETIME_BOUND {
-  // @@protoc_insertion_point(field_get:detection.Frame.camera_id)
-  return _internal_camera_id();
-}
-template <typename Arg_, typename... Args_>
-PROTOBUF_ALWAYS_INLINE void Frame::set_camera_id(Arg_&& arg, Args_... args) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
-  _impl_.camera_id_.Set(static_cast<Arg_&&>(arg), args..., GetArena());
-  // @@protoc_insertion_point(field_set:detection.Frame.camera_id)
-}
-inline ::std::string* PROTOBUF_NONNULL Frame::mutable_camera_id()
-    ABSL_ATTRIBUTE_LIFETIME_BOUND {
-  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
-  ::std::string* _s = _internal_mutable_camera_id();
-  // @@protoc_insertion_point(field_mutable:detection.Frame.camera_id)
-  return _s;
-}
-inline const ::std::string& Frame::_internal_camera_id() const {
-  ::google::protobuf::internal::TSanRead(&_impl_);
-  return _impl_.camera_id_.Get();
-}
-inline void Frame::_internal_set_camera_id(const ::std::string& value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.camera_id_.Set(value, GetArena());
-}
-inline ::std::string* PROTOBUF_NONNULL Frame::_internal_mutable_camera_id() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  return _impl_.camera_id_.Mutable( GetArena());
-}
-inline ::std::string* PROTOBUF_NULLABLE Frame::release_camera_id() {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  // @@protoc_insertion_point(field_release:detection.Frame.camera_id)
-  if (!CheckHasBit(_impl_._has_bits_[0], 0x00000004U)) {
-    return nullptr;
-  }
-  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
-  auto* released = _impl_.camera_id_.Release();
-  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString()) {
-    _impl_.camera_id_.Set("", GetArena());
-  }
-  return released;
-}
-inline void Frame::set_allocated_camera_id(::std::string* PROTOBUF_NULLABLE value) {
-  ::google::protobuf::internal::TSanWrite(&_impl_);
-  if (value != nullptr) {
-    SetHasBit(_impl_._has_bits_[0], 0x00000004U);
-  } else {
-    ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
-  }
-  _impl_.camera_id_.SetAllocated(value, GetArena());
-  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString() && _impl_.camera_id_.IsDefault()) {
-    _impl_.camera_id_.Set("", GetArena());
-  }
-  // @@protoc_insertion_point(field_set_allocated:detection.Frame.camera_id)
-}
-
 // int32 frame_id = 1;
 inline void Frame::clear_frame_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
@@ -1330,6 +1265,71 @@ inline ::google::protobuf::RepeatedPtrField<::detection::Detection>* PROTOBUF_NO
 Frame::_internal_mutable_detections() {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return &_impl_.detections_;
+}
+
+// string camera_id = 5;
+inline void Frame::clear_camera_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.camera_id_.ClearToEmpty();
+  ClearHasBit(_impl_._has_bits_[0],
+                  0x00000004U);
+}
+inline const ::std::string& Frame::camera_id() const
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  // @@protoc_insertion_point(field_get:detection.Frame.camera_id)
+  return _internal_camera_id();
+}
+template <typename Arg_, typename... Args_>
+PROTOBUF_ALWAYS_INLINE void Frame::set_camera_id(Arg_&& arg, Args_... args) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  _impl_.camera_id_.Set(static_cast<Arg_&&>(arg), args..., GetArena());
+  // @@protoc_insertion_point(field_set:detection.Frame.camera_id)
+}
+inline ::std::string* PROTOBUF_NONNULL Frame::mutable_camera_id()
+    ABSL_ATTRIBUTE_LIFETIME_BOUND {
+  SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  ::std::string* _s = _internal_mutable_camera_id();
+  // @@protoc_insertion_point(field_mutable:detection.Frame.camera_id)
+  return _s;
+}
+inline const ::std::string& Frame::_internal_camera_id() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.camera_id_.Get();
+}
+inline void Frame::_internal_set_camera_id(const ::std::string& value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.camera_id_.Set(value, GetArena());
+}
+inline ::std::string* PROTOBUF_NONNULL Frame::_internal_mutable_camera_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  return _impl_.camera_id_.Mutable( GetArena());
+}
+inline ::std::string* PROTOBUF_NULLABLE Frame::release_camera_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  // @@protoc_insertion_point(field_release:detection.Frame.camera_id)
+  if (!CheckHasBit(_impl_._has_bits_[0], 0x00000004U)) {
+    return nullptr;
+  }
+  ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  auto* released = _impl_.camera_id_.Release();
+  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString()) {
+    _impl_.camera_id_.Set("", GetArena());
+  }
+  return released;
+}
+inline void Frame::set_allocated_camera_id(::std::string* PROTOBUF_NULLABLE value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  if (value != nullptr) {
+    SetHasBit(_impl_._has_bits_[0], 0x00000004U);
+  } else {
+    ClearHasBit(_impl_._has_bits_[0], 0x00000004U);
+  }
+  _impl_.camera_id_.SetAllocated(value, GetArena());
+  if (::google::protobuf::internal::DebugHardenForceCopyDefaultString() && _impl_.camera_id_.IsDefault()) {
+    _impl_.camera_id_.Set("", GetArena());
+  }
+  // @@protoc_insertion_point(field_set_allocated:detection.Frame.camera_id)
 }
 
 #ifdef __GNUC__
