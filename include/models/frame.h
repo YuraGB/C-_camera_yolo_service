@@ -27,9 +27,13 @@
         float confidence = 0; // ймовірність
         BBox bbox;            // рамка
 
+        int track_id = -1;
+
         Detection() = default;
         Detection(const std::string& l, float c, const BBox& b)
             : label(l), confidence(c), bbox(b) {}
+        Detection(const std::string& l, float c, const BBox& b, int id)
+            : label(l), confidence(c), bbox(b), track_id(id) {}
     };
 
     // ------------------------------
