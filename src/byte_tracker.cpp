@@ -275,7 +275,9 @@ void ByteTracker::activateTrack(const TrackPtr& track, size_t frame_id, int64_t 
 
     track->rect = measurementToRect(track->kalman_filter.statePost.rowRange(0, 4));
     track->state = TrackState::Tracked;
-    track->is_activated = (frame_id == 1);
+    // In this service we want a newly accepted high-confidence detection
+    // to appear on the detection stream immediately.
+    track->is_activated = true;
     track->id = next_track_id_++;
     track->frame_id = frame_id;
     track->start_frame_id = frame_id;
