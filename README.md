@@ -1,148 +1,200 @@
 # Camera CV Service
 
-Сервіс для захоплення та обробки відеопотоків з камер (USB, вбудовані) або відеофайлів з використанням OpenCV та ONNX Runtime.
+Camera CV Service is a C++ application for capturing frames from cameras or video files, running YOLO inference through ONNX Runtime, and publishing the results over gRPC.
 
-    IMPORTANT!!!
-    This service was created by chatGPT (vide coding as you want).
-    Needed  Code review by real C++ developers
+The current project version exposes two independent gRPC streams:
 
-    ------
+- `StreamLiveFrames`: low-latency JPEG frames without detections
+- `StreamDetectionFrames`: JPEG frames published after YOLO inference completes, with detections aligned to the same image
 
-    VERY IMPORTANT!!!!
-    CMakeLists.txt  uses dependensies for WINDOWS WITH MY CURRENT configuration (paths fpr deps)
-    change configuration for your system
----
+This split lets a client display a smooth live view and a slower detection view in parallel.
 
-## Основні можливості
+## Features
 
-- Підключення декількох джерел відео одночасно:
-  - Вбудовані камери
-  - USB камери
-  - Відеофайли (`.mp4`, `.avi` тощо)
-- Захоплення та обробка кадрів у реальному часі
-- Інференс моделей нейромереж через ONNX Runtime (`yolov8x.onnx` за замовчуванням)
-- Підготовка результатів для gRPC-сервера (розширювано)
-- Потокова обробка з чергами кадрів для уникнення затримок
+- Multiple input sources at the same time
+- USB / built-in cameras
+- Video files such as `.mp4` and `.avi`
+- Frame capture with per-camera worker threads
+- YOLO inference through ONNX Runtime
+- gRPC streaming for both live and processed frames
+- Latest-frame streaming semantics to keep latency bounded
 
----
+## gRPC API
 
-## Стек технологій
+The protobuf service currently defines two server-streaming RPCs:
 
-- **C++17 / C++20**
-- **OpenCV 4.12** — обробка відео та камер
-- **ONNX Runtime** — inference нейромереж
-- **gRPC** — відправка результатів детекцій (розширювано)
-- **Protobuf** — опис структур даних для gRPC
-- **CMake** — система збірки
-- **vcpkg** — менеджер пакетів для Windows
-- **Multithreading** (`std::thread`, `std::mutex`, `std::condition_variable`) для паралельної обробки кадрів
+```proto
+service DetectionService {
+  rpc StreamLiveFrames(google.protobuf.Empty) returns (stream Frame);
+  rpc StreamDetectionFrames(google.protobuf.Empty) returns (stream Frame);
+}
+```
 
----
+Both streams return the same `Frame` message:
 
-## Підготовка проекту
+```json
+{
+  "frameId": 123,
+  "timestamp": 1711800000123,
+  "cameraId": "camera_0",
+  "image": "<JPEG bytes>",
+  "detections": [
+    {
+      "label": "person",
+      "confidence": 0.92,
+      "bbox": {
+        "x": 120,
+        "y": 48,
+        "width": 210,
+        "height": 390
+      }
+    }
+  ]
+}
+```
 
-1. Клонувати репозиторій:
+Expected stream behavior:
 
-```bash
-git clone <your-repo-url>
-cd camera_cv_service
-# Встановити залежності через vcpkg:
-cd E:/tools/vcpkg
+- `StreamLiveFrames`
+  - sends frames immediately after capture
+  - `detections` is usually empty
+  - best option for low-latency display
+- `StreamDetectionFrames`
+  - sends frames only after inference finishes
+  - `detections` belongs to the exact image in the same message
+  - lower effective FPS and higher latency than the live stream
+
+## Runtime Flow
+
+1. Camera threads capture frames and keep the newest frame for each source.
+2. The main loop publishes the newest frame to `StreamLiveFrames`.
+3. The same frame is submitted to the inference engine.
+4. When YOLO finishes, the processed frame is published to `StreamDetectionFrames`.
+
+This design is intentionally optimized for UX:
+
+- live viewing stays responsive
+- detection overlays stay aligned
+- stale queue buildup is reduced by keeping the newest data
+
+## Technology Stack
+
+- C++17
+- OpenCV
+- ONNX Runtime
+- gRPC
+- Protobuf
+- CMake
+- vcpkg
+- Standard C++ threading primitives
+
+## Project Structure
+
+```text
+camera_cv_service/
+|-- include/
+|   |-- camera_manager.h
+|   |-- grpc_server.h
+|   |-- inference_engine.h
+|   |-- generated_models/
+|   `-- models/
+|       `-- frame.h
+|-- models/
+|   `-- detection.proto
+|-- src/
+|   |-- camera_manager.cpp
+|   |-- grpc_server.cpp
+|   |-- inference_engine.cpp
+|   `-- main.cpp
+|-- CMakeLists.txt
+`-- README.md
+```
+
+## Build Notes
+
+The current `CMakeLists.txt` is still tied to the original Windows development environment.
+
+In particular, it currently assumes machine-specific paths such as:
+
+- `E:/tools/onnxruntime`
+- `E:/tools/vcpkg`
+- `E:/Progects/test/camera_cv_service`
+
+Before building on another machine, update `CMakeLists.txt` so these paths match your environment.
+
+The project also checks in generated gRPC service files under `include/generated_models/`.
+For the current branch, you do not need to regenerate protobuf files unless you modify `models/detection.proto`.
+
+## Example Windows Setup
+
+Typical dependency setup with `vcpkg` may look like this:
+
+```powershell
+cd E:\tools\vcpkg
 .\vcpkg install opencv4[core,videoio]:x64-windows
-.\vcpkg install onnxruntime:x64-windows
 .\vcpkg install protobuf:x64-windows
-# Згенерувати build-файли через CMake:
-cd E:/Progects/test/camera_cv_service
-cmake .. -B build -DCMAKE_TOOLCHAIN_FILE=E:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake
-# Зібрати проект:
+.\vcpkg install grpc:x64-windows
+```
+
+ONNX Runtime may be installed manually, depending on your local setup.
+
+Then configure and build:
+
+```powershell
+cd E:\Progects\test\camera_cv_service
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=E:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
 ```
-Бінарник з’явиться у:
 
-    build/build/bin/Release/camera_cv_service.exe
+Expected executable output:
 
-Запуск сервісу
-    
-    camera_cv_service.exe
-
-Автоматично підключає доступні камери (0..10).
-Для додавання відеофайлів у коді:
-
-
-    camera_manager.addCamera("video1", "example_video.mp4");
-
-Отримання та обробка кадрів:
-
-
-    auto frame = camera_manager.getLatestFrame("camera_0");
-    
-    if (frame) {
-      inference_engine.processFrame(frame);
-      auto result = inference_engine.getResult();
-    if (result) {
-        std::cout << "Frame " << result->frame_id
-                  << " from camera_0"
-                  << " processed, " << result->detections.size()
-                  << " detections" << std::endl;
-    }
-}
-
-Зупинка сервісу через Ctrl+C або виклик методів:
-    
-    camera_manager.stopAllCameras();
-    inference_engine.stop();
-    grpc_server.stop();
-
-Структура проекту
-```
-camera_cv_service/
-├─ include/
-│  ├─ camera_manager.h
-│  ├─ inference_engine.h
-│  └─ models/
-│     └─ frame.h
-├─ src/
-│  ├─ main.cpp
-│  ├─ camera_manager.cpp
-│  ├─ inference_engine.cpp
-│  └─ grpc_server.cpp
-├─ CMakeLists.txt
-└─ build/
+```text
+build/bin/Release/camera_cv_service.exe
 ```
 
-### Особливості сервісу
-Кадри з камер обробляються у потоках з власними чергами (std::deque) для уникнення блокувань.
-Підтримка обробки відеофайлів або камер одночасно.
-Інференс виконується у InferenceEngine та повертає детекції для подальшої обробки або gRPC.
-Можна масштабувати на кілька камер без блокування головного потоку.
-Приклад додавання камер та відео
+## Running the Service
 
+By default, the service:
 
-    // Додати USB або вбудовану камеру
-    camera_manager.addCamera("camera_0", "0");
-    camera_manager.addCamera("camera_1", "1");
+- looks for the model at `models/yolov8x.onnx`
+- tries to resolve an optional `test_video.mp4`
+- auto-detects local cameras from index `0` to `9`
+- starts the gRPC server on `0.0.0.0:50051`
 
+Run:
 
-    // Додати відеофайл
-    camera_manager.addCamera("video_file", "example_video.mp4");
+```powershell
+camera_cv_service.exe
+```
 
-    // Запуск усіх камер та обробка кадрів
-    camera_manager.startAllCameras();
-    inference_engine.start();
-  
-### TODO / Плани
-Тест на декількох камерах
-Тести ```yolo``` моделей 
+Stop with `Ctrl+C`.
 
-    Attention
+## Client Expectations
 
--  I couldn't dawnload 
-```.\vcpkg install onnxruntime:x64-windows```
-  So, I dawnload it manualy and I added .dll file into 
-```/buld/bin/Release/``` folder. Where main  <...>.exe file is.
-    
+A client can subscribe to both streams independently.
 
-Контакти
-  
-    Автор: Yurii H.
-    GitHub / Repo URL: <your-repo-url>
+For example, conceptually:
+
+```ts
+const live = grpcClient.StreamLiveFrames({});
+live.on("data", (frame) => {
+  // Display immediate JPEG frame
+});
+
+const detections = grpcClient.StreamDetectionFrames({});
+detections.on("data", (frame) => {
+  // Display processed JPEG frame with aligned detections
+});
+```
+
+## Known Limitations
+
+- `CMakeLists.txt` still contains Windows-specific absolute paths
+- the repository has no automated tests yet
+- local performance depends heavily on camera resolution, JPEG encoding cost, and YOLO model size
+- dual streaming increases network and JPEG encoding load compared with a single-stream design
+
+## Author
+
+- Author: Yurii H.
+- Repository: `YuraGB/C-_camera_yolo_service`
