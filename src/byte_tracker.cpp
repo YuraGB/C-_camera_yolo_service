@@ -1,220 +1,580 @@
 #include "byte_tracker.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include <map>
+#include <utility>
 
-namespace {
-cv::Point2f rectCenter(const cv::Rect2f& rect) {
-    return {rect.x + (rect.width * 0.5f), rect.y + (rect.height * 0.5f)};
-}
-}
+#include "byte_tracker_lapjv.h"
+
+// Core tracking flow adapted from the MIT-licensed ByteTrack-cpp project.
 
 ByteTracker::ByteTracker(Config config)
     : config_(config) {}
 
 void ByteTracker::advanceTo(int64_t timestamp_ms) {
-    for (auto& track : tracks_) {
-        predictTrack(track, timestamp_ms);
-    }
+    current_display_timestamp_ms_ = timestamp_ms;
 }
 
 void ByteTracker::updateWithDetections(const std::vector<Detection>& detections, int64_t timestamp_ms) {
-    advanceTo(timestamp_ms);
+    current_display_timestamp_ms_ = std::max(current_display_timestamp_ms_, timestamp_ms);
+    ++frame_id_;
 
-    std::vector<int> high_confidence_indices;
-    std::vector<int> low_confidence_indices;
-    for (int i = 0; i < static_cast<int>(detections.size()); ++i) {
-        if (detections[i].confidence >= config_.high_confidence_threshold) {
-            high_confidence_indices.push_back(i);
-        } else if (detections[i].confidence >= config_.low_confidence_threshold) {
-            low_confidence_indices.push_back(i);
+    std::vector<TrackPtr> high_detections;
+    std::vector<TrackPtr> low_detections;
+    high_detections.reserve(detections.size());
+    low_detections.reserve(detections.size());
+
+    for (const auto& detection : detections) {
+        auto det_track = createDetectionTrack(detection);
+        if (!det_track) {
+            continue;
+        }
+
+        if (det_track->score >= config_.track_threshold) {
+            high_detections.push_back(det_track);
+        } else {
+            low_detections.push_back(det_track);
         }
     }
 
-    std::vector<int> unmatched_tracks(tracks_.size());
-    for (int i = 0; i < static_cast<int>(tracks_.size()); ++i) {
-        unmatched_tracks[i] = i;
+    std::vector<TrackPtr> active_tracks;
+    std::vector<TrackPtr> unconfirmed_tracks;
+    for (const auto& track : tracked_tracks_) {
+        if (!track->is_activated) {
+            unconfirmed_tracks.push_back(track);
+        } else {
+            active_tracks.push_back(track);
+        }
     }
 
-    std::vector<int> unmatched_high = high_confidence_indices;
-    matchDetections(detections, high_confidence_indices, unmatched_tracks, unmatched_high, timestamp_ms);
+    std::vector<TrackPtr> track_pool = jointTracks(active_tracks, lost_tracks_);
+    for (const auto& track : track_pool) {
+        predictTrack(track);
+    }
 
-    std::vector<int> unmatched_low = low_confidence_indices;
-    matchDetections(detections, low_confidence_indices, unmatched_tracks, unmatched_low, timestamp_ms);
+    std::vector<TrackPtr> current_tracked;
+    std::vector<TrackPtr> remain_tracked;
+    std::vector<TrackPtr> remaining_high_detections;
+    std::vector<TrackPtr> refound_tracks;
 
-    ageUnmatchedTracks(unmatched_tracks);
-    createTracks(detections, unmatched_high, timestamp_ms);
+    {
+        std::vector<std::vector<int>> matches;
+        std::vector<int> unmatched_track_indices;
+        std::vector<int> unmatched_detection_indices;
 
-    tracks_.erase(
-        std::remove_if(tracks_.begin(), tracks_.end(), [this](const Track& track) {
-            return track.missed_frames > config_.max_missed_frames;
-        }),
-        tracks_.end());
+        const auto distances = calcIouDistance(track_pool, high_detections);
+        linearAssignment(
+            distances,
+            static_cast<int>(track_pool.size()),
+            static_cast<int>(high_detections.size()),
+            config_.match_threshold,
+            matches,
+            unmatched_track_indices,
+            unmatched_detection_indices);
+
+        for (const auto& match : matches) {
+            const auto& track = track_pool[match[0]];
+            const auto& detection = high_detections[match[1]];
+            if (track->state == TrackState::Tracked) {
+                updateTrack(track, detection, frame_id_, timestamp_ms);
+                current_tracked.push_back(track);
+            } else {
+                reactivateTrack(track, detection, frame_id_, timestamp_ms, false);
+                refound_tracks.push_back(track);
+            }
+        }
+
+        for (int index : unmatched_detection_indices) {
+            remaining_high_detections.push_back(high_detections[index]);
+        }
+
+        for (int index : unmatched_track_indices) {
+            if (track_pool[index]->state == TrackState::Tracked) {
+                remain_tracked.push_back(track_pool[index]);
+            }
+        }
+    }
+
+    std::vector<TrackPtr> current_lost;
+    {
+        std::vector<std::vector<int>> matches;
+        std::vector<int> unmatched_track_indices;
+        std::vector<int> unmatched_detection_indices;
+
+        const auto distances = calcIouDistance(remain_tracked, low_detections);
+        linearAssignment(
+            distances,
+            static_cast<int>(remain_tracked.size()),
+            static_cast<int>(low_detections.size()),
+            config_.low_match_threshold,
+            matches,
+            unmatched_track_indices,
+            unmatched_detection_indices);
+
+        for (const auto& match : matches) {
+            const auto& track = remain_tracked[match[0]];
+            const auto& detection = low_detections[match[1]];
+            if (track->state == TrackState::Tracked) {
+                updateTrack(track, detection, frame_id_, timestamp_ms);
+                current_tracked.push_back(track);
+            } else {
+                reactivateTrack(track, detection, frame_id_, timestamp_ms, false);
+                refound_tracks.push_back(track);
+            }
+        }
+
+        for (int index : unmatched_track_indices) {
+            if (remain_tracked[index]->state != TrackState::Lost) {
+                markLost(remain_tracked[index]);
+                current_lost.push_back(remain_tracked[index]);
+            }
+        }
+    }
+
+    std::vector<TrackPtr> current_removed;
+    {
+        std::vector<std::vector<int>> matches;
+        std::vector<int> unmatched_unconfirmed_indices;
+        std::vector<int> unmatched_detection_indices;
+
+        const auto distances = calcIouDistance(unconfirmed_tracks, remaining_high_detections);
+        linearAssignment(
+            distances,
+            static_cast<int>(unconfirmed_tracks.size()),
+            static_cast<int>(remaining_high_detections.size()),
+            config_.unconfirmed_match_threshold,
+            matches,
+            unmatched_unconfirmed_indices,
+            unmatched_detection_indices);
+
+        for (const auto& match : matches) {
+            updateTrack(
+                unconfirmed_tracks[match[0]],
+                remaining_high_detections[match[1]],
+                frame_id_,
+                timestamp_ms);
+            current_tracked.push_back(unconfirmed_tracks[match[0]]);
+        }
+
+        for (int index : unmatched_unconfirmed_indices) {
+            markRemoved(unconfirmed_tracks[index]);
+            current_removed.push_back(unconfirmed_tracks[index]);
+        }
+
+        for (int index : unmatched_detection_indices) {
+            const auto& track = remaining_high_detections[index];
+            if (track->score < config_.high_threshold) {
+                continue;
+            }
+            activateTrack(track, frame_id_, timestamp_ms);
+            current_tracked.push_back(track);
+        }
+    }
+
+    for (const auto& track : lost_tracks_) {
+        if ((frame_id_ - track->frame_id) > static_cast<size_t>(config_.track_buffer)) {
+            markRemoved(track);
+            current_removed.push_back(track);
+        }
+    }
+
+    tracked_tracks_ = jointTracks(current_tracked, refound_tracks);
+    lost_tracks_ = subtractTracks(
+        jointTracks(subtractTracks(lost_tracks_, tracked_tracks_), current_lost),
+        removed_tracks_);
+    removed_tracks_ = jointTracks(removed_tracks_, current_removed);
+
+    std::vector<TrackPtr> deduped_tracked;
+    std::vector<TrackPtr> deduped_lost;
+    removeDuplicateTracks(tracked_tracks_, lost_tracks_, deduped_tracked, deduped_lost);
+    tracked_tracks_ = std::move(deduped_tracked);
+    lost_tracks_ = std::move(deduped_lost);
 }
 
 std::vector<Detection> ByteTracker::getTrackedDetections() const {
     std::vector<Detection> detections;
-    detections.reserve(tracks_.size());
+    detections.reserve(tracked_tracks_.size());
 
-    for (const auto& track : tracks_) {
-        if (!track.confirmed ||
-            track.missed_frames > config_.max_missed_frames ||
-            track.frames_since_measurement > config_.max_unseen_frames_to_output) {
+    for (const auto& track : tracked_tracks_) {
+        if (!track->is_activated || track->state != TrackState::Tracked) {
+            continue;
+        }
+
+        const cv::Rect2f rect = predictedRectForDisplay(
+            *track,
+            current_display_timestamp_ms_,
+            config_.max_display_prediction_steps);
+
+        if (rect.width < config_.min_box_area || rect.height < config_.min_box_area) {
             continue;
         }
 
         detections.emplace_back(
-            track.label,
-            track.confidence,
+            track->label,
+            track->score,
             BBox(
-                static_cast<int>(track.bbox.x),
-                static_cast<int>(track.bbox.y),
-                static_cast<int>(track.bbox.width),
-                static_cast<int>(track.bbox.height)),
-            track.id);
+                static_cast<int>(std::round(rect.x)),
+                static_cast<int>(std::round(rect.y)),
+                static_cast<int>(std::round(rect.width)),
+                static_cast<int>(std::round(rect.height))),
+            track->id);
     }
 
     return detections;
 }
 
-void ByteTracker::predictTrack(Track& track, int64_t timestamp_ms) const {
-    if (timestamp_ms <= track.last_timestamp_ms) {
-        return;
-    }
-
-    const float dt_seconds = std::min(
-        static_cast<float>(timestamp_ms - track.last_timestamp_ms) / 1000.0f,
-        config_.max_prediction_time_seconds);
-    track.bbox.x += track.velocity.x * dt_seconds;
-    track.bbox.y += track.velocity.y * dt_seconds;
-    track.last_timestamp_ms = timestamp_ms;
-    track.frames_since_measurement += 1;
-    track.velocity *= config_.velocity_decay;
-}
-
-void ByteTracker::ageUnmatchedTracks(const std::vector<int>& track_indices) {
-    for (int track_index : track_indices) {
-        if (track_index >= 0 && track_index < static_cast<int>(tracks_.size())) {
-            tracks_[track_index].missed_frames += 1;
-        }
-    }
-}
-
-void ByteTracker::createTracks(const std::vector<Detection>& detections,
-                               const std::vector<int>& detection_indices,
-                               int64_t timestamp_ms) {
-    for (int detection_index : detection_indices) {
-        const auto& detection = detections[detection_index];
-        Track track;
-        track.id = next_track_id_++;
-        track.label = detection.label;
-        track.confidence = detection.confidence;
-        track.bbox = cv::Rect2f(
-            static_cast<float>(detection.bbox.x),
-                static_cast<float>(detection.bbox.y),
-                static_cast<float>(detection.bbox.width),
-                static_cast<float>(detection.bbox.height));
-        track.last_timestamp_ms = timestamp_ms;
-        track.total_hits = 1;
-        track.confirmed = (config_.min_confirmed_hits <= 1);
-        tracks_.push_back(track);
-    }
-}
-
-void ByteTracker::matchDetections(const std::vector<Detection>& detections,
-                                  const std::vector<int>& detection_indices,
-                                  std::vector<int>& unmatched_tracks,
-                                  std::vector<int>& unmatched_detections,
-                                  int64_t timestamp_ms) {
-    if (unmatched_tracks.empty() || detection_indices.empty()) {
-        unmatched_detections = detection_indices;
-        return;
-    }
-
-    unmatched_detections = detection_indices;
-    std::vector<bool> detection_used(detections.size(), false);
-    std::vector<int> still_unmatched_tracks;
-
-    for (int track_index : unmatched_tracks) {
-        float best_iou = 0.0f;
-        int best_detection_index = -1;
-
-        for (int detection_index : detection_indices) {
-            if (detection_used[detection_index]) {
-                continue;
-            }
-
-            const auto& detection = detections[detection_index];
-            if (tracks_[track_index].label != detection.label) {
-                continue;
-            }
-            const cv::Rect2f detection_bbox(
-                static_cast<float>(detection.bbox.x),
-                static_cast<float>(detection.bbox.y),
-                static_cast<float>(detection.bbox.width),
-                static_cast<float>(detection.bbox.height));
-
-            const float iou = computeIoU(tracks_[track_index].bbox, detection_bbox);
-            if (iou > best_iou) {
-                best_iou = iou;
-                best_detection_index = detection_index;
-            }
-        }
-
-        if (best_detection_index >= 0 && best_iou >= config_.match_iou_threshold) {
-            detection_used[best_detection_index] = true;
-            updateMatchedTrack(tracks_[track_index], detections[best_detection_index], timestamp_ms);
-        } else {
-            still_unmatched_tracks.push_back(track_index);
-        }
-    }
-
-    unmatched_tracks = std::move(still_unmatched_tracks);
-
-    unmatched_detections.clear();
-    for (int detection_index : detection_indices) {
-        if (!detection_used[detection_index]) {
-            unmatched_detections.push_back(detection_index);
-        }
-    }
-}
-
-void ByteTracker::updateMatchedTrack(Track& track, const Detection& detection, int64_t timestamp_ms) {
-    const cv::Rect2f previous_bbox = track.bbox;
-    const cv::Point2f previous_center = rectCenter(previous_bbox);
-
-    const cv::Rect2f detection_bbox(
+ByteTracker::TrackPtr ByteTracker::createDetectionTrack(const Detection& detection) const {
+    cv::Rect2f rect(
         static_cast<float>(detection.bbox.x),
         static_cast<float>(detection.bbox.y),
         static_cast<float>(detection.bbox.width),
         static_cast<float>(detection.bbox.height));
+    rect = sanitizeRect(rect);
 
-    const cv::Point2f detection_center = rectCenter(detection_bbox);
-    const float dt_seconds = std::max(0.001f, static_cast<float>(timestamp_ms - track.last_timestamp_ms) / 1000.0f);
+    if (rect.width < config_.min_box_area || rect.height < config_.min_box_area) {
+        return nullptr;
+    }
 
-    track.velocity = {
-        (track.velocity.x * 0.6f) + (((detection_center.x - previous_center.x) / dt_seconds) * 0.4f),
-        (track.velocity.y * 0.6f) + (((detection_center.y - previous_center.y) / dt_seconds) * 0.4f)
-    };
-    track.label = detection.label;
-    track.confidence = detection.confidence;
-    track.bbox = detection_bbox;
-    track.last_timestamp_ms = timestamp_ms;
-    track.missed_frames = 0;
-    track.frames_since_measurement = 0;
-    track.total_hits += 1;
-    track.confirmed = track.total_hits >= config_.min_confirmed_hits;
+    const float aspect_ratio = rect.width / std::max(rect.height, 1.0f);
+    if (aspect_ratio > config_.max_aspect_ratio) {
+        return nullptr;
+    }
+
+    auto track = std::make_shared<Track>();
+    track->label = detection.label;
+    track->score = detection.confidence;
+    track->rect = rect;
+    track->kalman_filter.init(8, 4, 0, CV_32F);
+    configureKalmanFilter(track->kalman_filter);
+    return track;
+}
+
+void ByteTracker::activateTrack(const TrackPtr& track, size_t frame_id, int64_t timestamp_ms) {
+    track->kalman_filter.init(8, 4, 0, CV_32F);
+    configureKalmanFilter(track->kalman_filter);
+
+    const cv::Mat measurement = rectToMeasurement(track->rect);
+    track->kalman_filter.statePost = cv::Mat::zeros(8, 1, CV_32F);
+    measurement.copyTo(track->kalman_filter.statePost.rowRange(0, 4));
+
+    cv::Mat covariance = cv::Mat::zeros(8, 8, CV_32F);
+    const float h = std::max(track->rect.height, 1.0f);
+    const float std_weight_position = 1.0f / 20.0f;
+    const float std_weight_velocity = 1.0f / 160.0f;
+    covariance.at<float>(0, 0) = std::pow(2.0f * std_weight_position * h, 2.0f);
+    covariance.at<float>(1, 1) = std::pow(2.0f * std_weight_position * h, 2.0f);
+    covariance.at<float>(2, 2) = std::pow(1e-2f, 2.0f);
+    covariance.at<float>(3, 3) = std::pow(2.0f * std_weight_position * h, 2.0f);
+    covariance.at<float>(4, 4) = std::pow(10.0f * std_weight_velocity * h, 2.0f);
+    covariance.at<float>(5, 5) = std::pow(10.0f * std_weight_velocity * h, 2.0f);
+    covariance.at<float>(6, 6) = std::pow(1e-5f, 2.0f);
+    covariance.at<float>(7, 7) = std::pow(10.0f * std_weight_velocity * h, 2.0f);
+    track->kalman_filter.errorCovPost = covariance;
+
+    track->rect = measurementToRect(track->kalman_filter.statePost.rowRange(0, 4));
+    track->state = TrackState::Tracked;
+    track->is_activated = (frame_id == 1);
+    track->id = next_track_id_++;
+    track->frame_id = frame_id;
+    track->start_frame_id = frame_id;
+    track->tracklet_length = 0;
+    track->last_detection_timestamp_ms = timestamp_ms;
+}
+
+void ByteTracker::predictTrack(const TrackPtr& track) const {
+    if (track->state != TrackState::Tracked) {
+        track->kalman_filter.statePost.at<float>(7, 0) = 0.0f;
+    }
+
+    updateProcessNoise(track->kalman_filter, std::max(track->rect.height, 1.0f));
+    track->kalman_filter.predict();
+    track->kalman_filter.statePost = track->kalman_filter.statePre.clone();
+    track->kalman_filter.errorCovPost = track->kalman_filter.errorCovPre.clone();
+    track->rect = measurementToRect(track->kalman_filter.statePost.rowRange(0, 4));
+}
+
+void ByteTracker::updateTrack(const TrackPtr& track,
+                              const TrackPtr& detection,
+                              size_t frame_id,
+                              int64_t timestamp_ms) {
+    updateMeasurementNoise(track->kalman_filter, std::max(detection->rect.height, 1.0f));
+    const cv::Mat corrected = track->kalman_filter.correct(rectToMeasurement(detection->rect));
+    track->rect = measurementToRect(corrected.rowRange(0, 4));
+    track->state = TrackState::Tracked;
+    track->is_activated = true;
+    track->score = detection->score;
+    track->label = detection->label;
+    track->frame_id = frame_id;
+    track->tracklet_length += 1;
+    if (track->last_detection_timestamp_ms > 0 && timestamp_ms > track->last_detection_timestamp_ms) {
+        track->average_detection_interval_ms =
+            (track->average_detection_interval_ms * 0.8f) +
+            (static_cast<float>(timestamp_ms - track->last_detection_timestamp_ms) * 0.2f);
+    }
+    track->last_detection_timestamp_ms = timestamp_ms;
+}
+
+void ByteTracker::reactivateTrack(const TrackPtr& track,
+                                  const TrackPtr& detection,
+                                  size_t frame_id,
+                                  int64_t timestamp_ms,
+                                  bool assign_new_id) {
+    updateTrack(track, detection, frame_id, timestamp_ms);
+    track->tracklet_length = 0;
+    if (assign_new_id) {
+        track->id = next_track_id_++;
+    }
+}
+
+void ByteTracker::markLost(const TrackPtr& track) const {
+    track->state = TrackState::Lost;
+}
+
+void ByteTracker::markRemoved(const TrackPtr& track) const {
+    track->state = TrackState::Removed;
+}
+
+std::vector<ByteTracker::TrackPtr> ByteTracker::jointTracks(const std::vector<TrackPtr>& lhs,
+                                                            const std::vector<TrackPtr>& rhs) const {
+    std::map<int, TrackPtr> unique_tracks;
+    for (const auto& track : lhs) {
+        unique_tracks[track->id] = track;
+    }
+    for (const auto& track : rhs) {
+        unique_tracks.emplace(track->id, track);
+    }
+
+    std::vector<TrackPtr> result;
+    result.reserve(unique_tracks.size());
+    for (const auto& entry : unique_tracks) {
+        if (entry.second->state != TrackState::Removed) {
+            result.push_back(entry.second);
+        }
+    }
+    return result;
+}
+
+std::vector<ByteTracker::TrackPtr> ByteTracker::subtractTracks(const std::vector<TrackPtr>& lhs,
+                                                               const std::vector<TrackPtr>& rhs) const {
+    std::map<int, TrackPtr> remaining;
+    for (const auto& track : lhs) {
+        remaining[track->id] = track;
+    }
+    for (const auto& track : rhs) {
+        remaining.erase(track->id);
+    }
+
+    std::vector<TrackPtr> result;
+    result.reserve(remaining.size());
+    for (const auto& entry : remaining) {
+        if (entry.second->state != TrackState::Removed) {
+            result.push_back(entry.second);
+        }
+    }
+    return result;
+}
+
+void ByteTracker::removeDuplicateTracks(const std::vector<TrackPtr>& lhs,
+                                        const std::vector<TrackPtr>& rhs,
+                                        std::vector<TrackPtr>& lhs_result,
+                                        std::vector<TrackPtr>& rhs_result) const {
+    const auto distances = calcIouDistance(lhs, rhs);
+
+    std::vector<bool> lhs_overlap(lhs.size(), false);
+    std::vector<bool> rhs_overlap(rhs.size(), false);
+
+    for (size_t i = 0; i < distances.size(); ++i) {
+        for (size_t j = 0; j < distances[i].size(); ++j) {
+            if (distances[i][j] < 0.15f) {
+                const size_t lhs_lifetime = lhs[i]->frame_id - lhs[i]->start_frame_id;
+                const size_t rhs_lifetime = rhs[j]->frame_id - rhs[j]->start_frame_id;
+                if (lhs_lifetime > rhs_lifetime) {
+                    rhs_overlap[j] = true;
+                } else {
+                    lhs_overlap[i] = true;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        if (!lhs_overlap[i]) {
+            lhs_result.push_back(lhs[i]);
+        }
+    }
+    for (size_t i = 0; i < rhs.size(); ++i) {
+        if (!rhs_overlap[i]) {
+            rhs_result.push_back(rhs[i]);
+        }
+    }
+}
+
+void ByteTracker::linearAssignment(const std::vector<std::vector<float>>& cost_matrix,
+                                   int row_count,
+                                   int column_count,
+                                   float threshold,
+                                   std::vector<std::vector<int>>& matches,
+                                   std::vector<int>& unmatched_rows,
+                                   std::vector<int>& unmatched_columns) const {
+    if (cost_matrix.empty()) {
+        for (int i = 0; i < row_count; ++i) {
+            unmatched_rows.push_back(i);
+        }
+        for (int i = 0; i < column_count; ++i) {
+            unmatched_columns.push_back(i);
+        }
+        return;
+    }
+
+    std::vector<int> rowsol;
+    std::vector<int> colsol;
+    byte_tracker_internal::exec_lapjv(cost_matrix, rowsol, colsol, true, threshold);
+
+    for (size_t row = 0; row < rowsol.size(); ++row) {
+        if (rowsol[row] >= 0) {
+            matches.push_back({static_cast<int>(row), rowsol[row]});
+        } else {
+            unmatched_rows.push_back(static_cast<int>(row));
+        }
+    }
+
+    for (size_t column = 0; column < colsol.size(); ++column) {
+        if (colsol[column] < 0) {
+            unmatched_columns.push_back(static_cast<int>(column));
+        }
+    }
+}
+
+std::vector<std::vector<float>> ByteTracker::calcIouDistance(const std::vector<TrackPtr>& lhs,
+                                                             const std::vector<TrackPtr>& rhs) const {
+    if (lhs.empty() || rhs.empty()) {
+        return {};
+    }
+
+    std::vector<std::vector<float>> distances(lhs.size(), std::vector<float>(rhs.size(), 1.0f));
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        for (size_t j = 0; j < rhs.size(); ++j) {
+            if (lhs[i]->label != rhs[j]->label) {
+                distances[i][j] = 1.0f + config_.match_threshold;
+                continue;
+            }
+            distances[i][j] = 1.0f - computeIoU(lhs[i]->rect, rhs[j]->rect);
+        }
+    }
+    return distances;
 }
 
 float ByteTracker::computeIoU(const cv::Rect2f& lhs, const cv::Rect2f& rhs) {
-    const float intersection_area = (lhs & rhs).area();
-    if (intersection_area <= 0.0f) {
+    const cv::Rect2f clean_lhs = sanitizeRect(lhs);
+    const cv::Rect2f clean_rhs = sanitizeRect(rhs);
+    const float intersection = (clean_lhs & clean_rhs).area();
+    if (intersection <= 0.0f) {
         return 0.0f;
     }
-
-    const float union_area = lhs.area() + rhs.area() - intersection_area;
+    const float union_area = clean_lhs.area() + clean_rhs.area() - intersection;
     if (union_area <= 0.0f) {
         return 0.0f;
     }
+    return intersection / union_area;
+}
 
-    return intersection_area / union_area;
+cv::Rect2f ByteTracker::sanitizeRect(const cv::Rect2f& rect) {
+    return {
+        std::max(rect.x, 0.0f),
+        std::max(rect.y, 0.0f),
+        std::max(rect.width, 0.0f),
+        std::max(rect.height, 0.0f)
+    };
+}
+
+cv::Rect2f ByteTracker::measurementToRect(const cv::Mat& measurement) {
+    const float center_x = measurement.at<float>(0, 0);
+    const float center_y = measurement.at<float>(1, 0);
+    const float aspect = measurement.at<float>(2, 0);
+    const float height = std::max(measurement.at<float>(3, 0), 1.0f);
+    const float width = std::max(aspect * height, 1.0f);
+
+    return sanitizeRect({
+        center_x - (width * 0.5f),
+        center_y - (height * 0.5f),
+        width,
+        height
+    });
+}
+
+cv::Mat ByteTracker::rectToMeasurement(const cv::Rect2f& rect) {
+    const cv::Rect2f clean = sanitizeRect(rect);
+    cv::Mat measurement = cv::Mat::zeros(4, 1, CV_32F);
+    measurement.at<float>(0, 0) = clean.x + (clean.width * 0.5f);
+    measurement.at<float>(1, 0) = clean.y + (clean.height * 0.5f);
+    measurement.at<float>(2, 0) = clean.width / std::max(clean.height, 1.0f);
+    measurement.at<float>(3, 0) = clean.height;
+    return measurement;
+}
+
+void ByteTracker::configureKalmanFilter(cv::KalmanFilter& filter) {
+    filter.transitionMatrix = cv::Mat::eye(8, 8, CV_32F);
+    for (int i = 0; i < 4; ++i) {
+        filter.transitionMatrix.at<float>(i, i + 4) = 1.0f;
+    }
+
+    filter.measurementMatrix = cv::Mat::zeros(4, 8, CV_32F);
+    for (int i = 0; i < 4; ++i) {
+        filter.measurementMatrix.at<float>(i, i) = 1.0f;
+    }
+
+    filter.processNoiseCov = cv::Mat::eye(8, 8, CV_32F);
+    filter.measurementNoiseCov = cv::Mat::eye(4, 4, CV_32F);
+    filter.errorCovPost = cv::Mat::eye(8, 8, CV_32F);
+    filter.statePost = cv::Mat::zeros(8, 1, CV_32F);
+}
+
+void ByteTracker::updateProcessNoise(cv::KalmanFilter& filter, float height) {
+    const float h = std::max(height, 1.0f);
+    const float std_weight_position = 1.0f / 20.0f;
+    const float std_weight_velocity = 1.0f / 160.0f;
+
+    filter.processNoiseCov = cv::Mat::zeros(8, 8, CV_32F);
+    filter.processNoiseCov.at<float>(0, 0) = std::pow(std_weight_position * h, 2.0f);
+    filter.processNoiseCov.at<float>(1, 1) = std::pow(std_weight_position * h, 2.0f);
+    filter.processNoiseCov.at<float>(2, 2) = std::pow(1e-2f, 2.0f);
+    filter.processNoiseCov.at<float>(3, 3) = std::pow(std_weight_position * h, 2.0f);
+    filter.processNoiseCov.at<float>(4, 4) = std::pow(std_weight_velocity * h, 2.0f);
+    filter.processNoiseCov.at<float>(5, 5) = std::pow(std_weight_velocity * h, 2.0f);
+    filter.processNoiseCov.at<float>(6, 6) = std::pow(1e-5f, 2.0f);
+    filter.processNoiseCov.at<float>(7, 7) = std::pow(std_weight_velocity * h, 2.0f);
+}
+
+void ByteTracker::updateMeasurementNoise(cv::KalmanFilter& filter, float height) {
+    const float h = std::max(height, 1.0f);
+    const float std_weight_position = 1.0f / 20.0f;
+
+    filter.measurementNoiseCov = cv::Mat::zeros(4, 4, CV_32F);
+    filter.measurementNoiseCov.at<float>(0, 0) = std::pow(std_weight_position * h, 2.0f);
+    filter.measurementNoiseCov.at<float>(1, 1) = std::pow(std_weight_position * h, 2.0f);
+    filter.measurementNoiseCov.at<float>(2, 2) = std::pow(1e-1f, 2.0f);
+    filter.measurementNoiseCov.at<float>(3, 3) = std::pow(std_weight_position * h, 2.0f);
+}
+
+cv::Rect2f ByteTracker::predictedRectForDisplay(const Track& track,
+                                                int64_t display_timestamp_ms,
+                                                float max_prediction_steps) {
+    if (display_timestamp_ms <= track.last_detection_timestamp_ms) {
+        return sanitizeRect(track.rect);
+    }
+
+    const float interval_ms = std::max(track.average_detection_interval_ms, 1.0f);
+    const float elapsed_steps = std::min(
+        static_cast<float>(display_timestamp_ms - track.last_detection_timestamp_ms) / interval_ms,
+        max_prediction_steps);
+
+    cv::Mat state = track.kalman_filter.statePost.clone();
+    state.at<float>(0, 0) += state.at<float>(4, 0) * elapsed_steps;
+    state.at<float>(1, 0) += state.at<float>(5, 0) * elapsed_steps;
+    state.at<float>(2, 0) += state.at<float>(6, 0) * elapsed_steps;
+    state.at<float>(3, 0) += state.at<float>(7, 0) * elapsed_steps;
+
+    return measurementToRect(state.rowRange(0, 4));
 }
