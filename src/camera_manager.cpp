@@ -4,6 +4,7 @@
 #include <thread>
 #include <opencv2/opencv.hpp>
 
+
 CameraManager::CameraManager(InferenceEngine* engine)
     : inferenceEngine_(engine) {}
 
@@ -86,10 +87,14 @@ void CameraManager::captureLoop(const std::string& camera_id) {
     }
 
     int64_t frame_id = 0;
+    auto fps_delay = std::chrono::milliseconds(10);
+
     while (cam->running) {
+        auto start_time = std::chrono::high_resolution_clock::now();
+
         cv::Mat mat;
         if (!cam->cap.read(mat) || mat.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
 
@@ -103,6 +108,11 @@ void CameraManager::captureLoop(const std::string& camera_id) {
         );
 
         enqueueFrame(frame, *cam);
+
+        auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+        auto sleep_time = fps_delay - std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+        if (sleep_time.count() > 0)
+            std::this_thread::sleep_for(sleep_time);
     }
 
     cam->cap.release();

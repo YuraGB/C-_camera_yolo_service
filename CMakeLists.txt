@@ -7,6 +7,19 @@ project(CameraCVService)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Використовуємо C++17
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Вказати шляхи до include та lib для OpenCV
+find_package(OpenCV REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIRS})
+
+# Вказати шляхи до Protobuf та gRPC
+include_directories(E:/Progects/test/camera_cv_service/include)
+include_directories(E:/Progects/test/camera_cv_service/include/generated_models)
+link_directories(E:/Progects/test/camera_cv_service/lib)
+
 # ------------------------------
 # Toolchain vcpkg
 # ------------------------------
