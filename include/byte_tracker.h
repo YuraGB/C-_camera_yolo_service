@@ -15,6 +15,10 @@ public:
         float low_confidence_threshold = 0.1f;
         float match_iou_threshold = 0.3f;
         int max_missed_frames = 15;
+        int max_unseen_frames_to_output = 2;
+        int min_confirmed_hits = 2;
+        float velocity_decay = 0.85f;
+        float max_prediction_time_seconds = 0.2f;
     };
 
     explicit ByteTracker(Config config = {});
@@ -32,6 +36,9 @@ private:
         cv::Point2f velocity{0.0f, 0.0f};
         int64_t last_timestamp_ms = 0;
         int missed_frames = 0;
+        int frames_since_measurement = 0;
+        int total_hits = 0;
+        bool confirmed = false;
     };
 
     void predictTrack(Track& track, int64_t timestamp_ms) const;

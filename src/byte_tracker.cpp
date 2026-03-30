@@ -56,7 +56,9 @@ std::vector<Detection> ByteTracker::getTrackedDetections() const {
     detections.reserve(tracks_.size());
 
     for (const auto& track : tracks_) {
-        if (track.missed_frames > config_.max_missed_frames) {
+        if (!track.confirmed ||
+            track.missed_frames > config_.max_missed_frames ||
+            track.frames_since_measurement > config_.max_unseen_frames_to_output) {
             continue;
         }
 
@@ -79,10 +81,14 @@ void ByteTracker::predictTrack(Track& track, int64_t timestamp_ms) const {
         return;
     }
 
-    const float dt_seconds = static_cast<float>(timestamp_ms - track.last_timestamp_ms) / 1000.0f;
+    const float dt_seconds = std::min(
+        static_cast<float>(timestamp_ms - track.last_timestamp_ms) / 1000.0f,
+        config_.max_prediction_time_seconds);
     track.bbox.x += track.velocity.x * dt_seconds;
     track.bbox.y += track.velocity.y * dt_seconds;
     track.last_timestamp_ms = timestamp_ms;
+    track.frames_since_measurement += 1;
+    track.velocity *= config_.velocity_decay;
 }
 
 void ByteTracker::ageUnmatchedTracks(const std::vector<int>& track_indices) {
@@ -104,10 +110,12 @@ void ByteTracker::createTracks(const std::vector<Detection>& detections,
         track.confidence = detection.confidence;
         track.bbox = cv::Rect2f(
             static_cast<float>(detection.bbox.x),
-            static_cast<float>(detection.bbox.y),
-            static_cast<float>(detection.bbox.width),
-            static_cast<float>(detection.bbox.height));
+                static_cast<float>(detection.bbox.y),
+                static_cast<float>(detection.bbox.width),
+                static_cast<float>(detection.bbox.height));
         track.last_timestamp_ms = timestamp_ms;
+        track.total_hits = 1;
+        track.confirmed = (config_.min_confirmed_hits <= 1);
         tracks_.push_back(track);
     }
 }
@@ -136,6 +144,9 @@ void ByteTracker::matchDetections(const std::vector<Detection>& detections,
             }
 
             const auto& detection = detections[detection_index];
+            if (tracks_[track_index].label != detection.label) {
+                continue;
+            }
             const cv::Rect2f detection_bbox(
                 static_cast<float>(detection.bbox.x),
                 static_cast<float>(detection.bbox.y),
@@ -181,14 +192,17 @@ void ByteTracker::updateMatchedTrack(Track& track, const Detection& detection, i
     const float dt_seconds = std::max(0.001f, static_cast<float>(timestamp_ms - track.last_timestamp_ms) / 1000.0f);
 
     track.velocity = {
-        (detection_center.x - previous_center.x) / dt_seconds,
-        (detection_center.y - previous_center.y) / dt_seconds
+        (track.velocity.x * 0.6f) + (((detection_center.x - previous_center.x) / dt_seconds) * 0.4f),
+        (track.velocity.y * 0.6f) + (((detection_center.y - previous_center.y) / dt_seconds) * 0.4f)
     };
     track.label = detection.label;
     track.confidence = detection.confidence;
     track.bbox = detection_bbox;
     track.last_timestamp_ms = timestamp_ms;
     track.missed_frames = 0;
+    track.frames_since_measurement = 0;
+    track.total_hits += 1;
+    track.confirmed = track.total_hits >= config_.min_confirmed_hits;
 }
 
 float ByteTracker::computeIoU(const cv::Rect2f& lhs, const cv::Rect2f& rhs) {
