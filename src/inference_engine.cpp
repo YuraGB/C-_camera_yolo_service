@@ -33,7 +33,7 @@
 namespace {
 constexpr int kModelInputWidth = 640;
 constexpr int kModelInputHeight = 640;
-constexpr auto kLetterboxPaddingColor = cv::Scalar(114, 114, 114);
+const cv::Scalar kLetterboxPaddingColor(114, 114, 114);
 
 const std::vector<std::string> kCocoLabels = {
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
