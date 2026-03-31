@@ -242,6 +242,14 @@ int main() {
                         inference_engine.processFrame(frame);
                         pipeline_state.frames_until_detection = kDetectionIntervalFrames - 1;
                     } else {
+                        auto tracked_frame = std::make_shared<Frame>(
+                            frame->camera_id,
+                            frame->frame_id,
+                            frame->timestamp,
+                            frame->mat
+                        );
+                        tracked_frame->detections = pipeline_state.tracker.getTrackedDetections();
+                        grpc_server.sendDetectionResult(tracked_frame);
                         --pipeline_state.frames_until_detection;
                     }
                 }
