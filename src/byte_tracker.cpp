@@ -225,12 +225,13 @@ std::vector<Detection> ByteTracker::getTrackedDetections() const {
             continue;
         }
 
-        const cv::Rect2f rect = predictedRectForDisplay(
+        const cv::Rect2f predicted_rect = predictedRectForDisplay(
             *track,
             current_display_timestamp_ms_,
             config_.max_display_prediction_steps);
+        const cv::Rect2f output_rect = sanitizeRect(track->display_rect);
 
-        if (rect.width < config_.min_box_area || rect.height < config_.min_box_area) {
+        if (predicted_rect.width < config_.min_box_area || predicted_rect.height < config_.min_box_area) {
             continue;
         }
 
@@ -238,10 +239,10 @@ std::vector<Detection> ByteTracker::getTrackedDetections() const {
             track->label,
             track->score,
             BBox(
-                static_cast<int>(std::round(rect.x)),
-                static_cast<int>(std::round(rect.y)),
-                static_cast<int>(std::round(rect.width)),
-                static_cast<int>(std::round(rect.height))),
+                static_cast<int>(std::round(output_rect.x)),
+                static_cast<int>(std::round(output_rect.y)),
+                static_cast<int>(std::round(output_rect.width)),
+                static_cast<int>(std::round(output_rect.height))),
             track->id);
     }
 
@@ -269,6 +270,7 @@ ByteTracker::TrackPtr ByteTracker::createDetectionTrack(const Detection& detecti
     track->label = detection.label;
     track->score = detection.confidence;
     track->rect = rect;
+    track->display_rect = rect;
     track->kalman_filter.init(8, 4, 0, CV_32F);
     configureKalmanFilter(track->kalman_filter);
     return track;
@@ -306,6 +308,7 @@ void ByteTracker::activateTrack(const TrackPtr& track, size_t frame_id, int64_t 
     track->start_frame_id = frame_id;
     track->tracklet_length = 0;
     track->last_detection_timestamp_ms = timestamp_ms;
+    updateDisplayRect(track, true);
 }
 
 void ByteTracker::predictTrack(const TrackPtr& track) const {
@@ -339,6 +342,7 @@ void ByteTracker::updateTrack(const TrackPtr& track,
             (static_cast<float>(timestamp_ms - track->last_detection_timestamp_ms) * 0.2f);
     }
     track->last_detection_timestamp_ms = timestamp_ms;
+    updateDisplayRect(track, false);
 }
 
 void ByteTracker::reactivateTrack(const TrackPtr& track,
@@ -688,6 +692,7 @@ void ByteTracker::applyVisualTracking(const cv::Mat& gray_frame, int64_t timesta
             predicted_rect.height
         });
         syncTrackStateToRect(track);
+        updateDisplayRect(track, false);
     }
 }
 
@@ -699,6 +704,19 @@ void ByteTracker::syncTrackStateToRect(const TrackPtr& track) const {
     track->kalman_filter.statePost.at<float>(3, 0) = measurement.at<float>(3, 0);
     track->kalman_filter.statePost.at<float>(6, 0) = 0.0f;
     track->kalman_filter.statePost.at<float>(7, 0) = 0.0f;
+}
+
+void ByteTracker::updateDisplayRect(const TrackPtr& track, bool force) const {
+    if (force) {
+        track->display_rect = track->rect;
+        return;
+    }
+
+    const float alpha = std::clamp(config_.display_smoothing_alpha, 0.0f, 1.0f);
+    track->display_rect.x = (track->display_rect.x * (1.0f - alpha)) + (track->rect.x * alpha);
+    track->display_rect.y = (track->display_rect.y * (1.0f - alpha)) + (track->rect.y * alpha);
+    track->display_rect.width = (track->display_rect.width * (1.0f - alpha)) + (track->rect.width * alpha);
+    track->display_rect.height = (track->display_rect.height * (1.0f - alpha)) + (track->rect.height * alpha);
 }
 
 float ByteTracker::median(std::vector<float>& values) {

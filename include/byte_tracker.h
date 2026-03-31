@@ -25,6 +25,7 @@ public:
         float min_box_area = 10.0f;
         float max_aspect_ratio = 8.0f;
         float max_display_prediction_steps = 2.0f;
+        float display_smoothing_alpha = 0.65f;
         int optical_flow_max_corners = 32;
         double optical_flow_quality_level = 0.01;
         double optical_flow_min_distance = 5.0;
@@ -53,6 +54,7 @@ private:
         std::string label;
         float score = 0.0f;
         cv::Rect2f rect;
+        cv::Rect2f display_rect;
         TrackState state = TrackState::New;
         bool is_activated = false;
         size_t frame_id = 0;
@@ -105,6 +107,7 @@ private:
                                               float max_prediction_steps);
     void applyVisualTracking(const cv::Mat& gray_frame, int64_t timestamp_ms);
     void syncTrackStateToRect(const TrackPtr& track) const;
+    void updateDisplayRect(const TrackPtr& track, bool force) const;
     static float median(std::vector<float>& values);
 
     Config config_;

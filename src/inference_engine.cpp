@@ -33,6 +33,7 @@
 namespace {
 constexpr int kModelInputWidth = 640;
 constexpr int kModelInputHeight = 640;
+constexpr auto kLetterboxPaddingColor = cv::Scalar(114, 114, 114);
 
 const std::vector<std::string> kCocoLabels = {
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
@@ -55,6 +56,41 @@ std::string classIdToLabel(int class_id) {
 
 bool hasProvider(const std::vector<std::string>& providers, const char* provider_name) {
     return std::find(providers.begin(), providers.end(), provider_name) != providers.end();
+}
+
+cv::Mat prepareLetterboxedInput(const cv::Mat& source, float& scale, float& pad_x, float& pad_y) {
+    scale = std::min(
+        static_cast<float>(kModelInputWidth) / static_cast<float>(source.cols),
+        static_cast<float>(kModelInputHeight) / static_cast<float>(source.rows));
+
+    const int resized_width = std::max(1, static_cast<int>(std::round(static_cast<float>(source.cols) * scale)));
+    const int resized_height = std::max(1, static_cast<int>(std::round(static_cast<float>(source.rows) * scale)));
+
+    cv::Mat resized;
+    cv::resize(source, resized, cv::Size(resized_width, resized_height));
+
+    const int total_pad_x = std::max(0, kModelInputWidth - resized_width);
+    const int total_pad_y = std::max(0, kModelInputHeight - resized_height);
+    const int left = total_pad_x / 2;
+    const int right = total_pad_x - left;
+    const int top = total_pad_y / 2;
+    const int bottom = total_pad_y - top;
+
+    pad_x = static_cast<float>(left);
+    pad_y = static_cast<float>(top);
+
+    cv::Mat letterboxed;
+    cv::copyMakeBorder(
+        resized,
+        letterboxed,
+        top,
+        bottom,
+        left,
+        right,
+        cv::BORDER_CONSTANT,
+        kLetterboxPaddingColor);
+
+    return letterboxed;
 }
 
 #ifdef _WIN32
@@ -478,7 +514,10 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
     frame->detections.clear();
 
     cv::Mat infer_mat;
-    cv::resize(frame->mat, infer_mat, cv::Size(kModelInputWidth, kModelInputHeight));
+    float letterbox_scale = 1.0f;
+    float pad_x = 0.0f;
+    float pad_y = 0.0f;
+    infer_mat = prepareLetterboxedInput(frame->mat, letterbox_scale, pad_x, pad_y);
     infer_mat.convertTo(infer_mat, CV_32F, 1.0 / 255.0);
     cv::cvtColor(infer_mat, infer_mat, cv::COLOR_BGR2RGB);
 
@@ -538,8 +577,13 @@ void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<
     const int num_classes = static_cast<int>(num_features - 4);
     const float* data = frame->inference_result.data();
 
-    const float scale_x = static_cast<float>(frame->mat.cols) / static_cast<float>(kModelInputWidth);
-    const float scale_y = static_cast<float>(frame->mat.rows) / static_cast<float>(kModelInputHeight);
+    const float scale = std::min(
+        static_cast<float>(kModelInputWidth) / static_cast<float>(frame->mat.cols),
+        static_cast<float>(kModelInputHeight) / static_cast<float>(frame->mat.rows));
+    const float resized_width = static_cast<float>(frame->mat.cols) * scale;
+    const float resized_height = static_cast<float>(frame->mat.rows) * scale;
+    const float pad_x = (static_cast<float>(kModelInputWidth) - resized_width) * 0.5f;
+    const float pad_y = (static_cast<float>(kModelInputHeight) - resized_height) * 0.5f;
 
     std::vector<cv::Rect> boxes;
     std::vector<float> scores;
@@ -565,10 +609,15 @@ void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<
             continue;
         }
 
-        const int left = std::max(0, static_cast<int>((x - (w * 0.5f)) * scale_x));
-        const int top = std::max(0, static_cast<int>((y - (h * 0.5f)) * scale_y));
-        const int width = std::max(0, static_cast<int>(w * scale_x));
-        const int height = std::max(0, static_cast<int>(h * scale_y));
+        const float left_unscaled = (x - (w * 0.5f) - pad_x) / scale;
+        const float top_unscaled = (y - (h * 0.5f) - pad_y) / scale;
+        const float width_unscaled = w / scale;
+        const float height_unscaled = h / scale;
+
+        const int left = std::max(0, static_cast<int>(std::round(left_unscaled)));
+        const int top = std::max(0, static_cast<int>(std::round(top_unscaled)));
+        const int width = std::max(0, static_cast<int>(std::round(width_unscaled)));
+        const int height = std::max(0, static_cast<int>(std::round(height_unscaled)));
 
         if (width == 0 || height == 0) {
             continue;
