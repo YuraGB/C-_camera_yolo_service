@@ -36,6 +36,7 @@ constexpr int kDetectionIntervalFrames = 2;
 struct CameraPipelineState {
     ByteTracker tracker;
     int frames_until_detection = 0;
+    int64_t last_detection_stream_frame_id = -1;
 };
 
 std::filesystem::path getExecutableDir() {
@@ -105,15 +106,17 @@ void drainDetectionResults(
     while (auto result = inference_engine.getResult()) {
         auto& state = camera_states[result->camera_id];
         state.tracker.updateWithDetections(result->detections, result->timestamp);
-
-        auto tracked_result = std::make_shared<Frame>(
-            result->camera_id,
-            result->frame_id,
-            result->timestamp,
-            result->mat
-        );
-        tracked_result->detections = state.tracker.getTrackedDetections();
-        grpc_server.sendDetectionResult(tracked_result);
+        if (result->frame_id >= state.last_detection_stream_frame_id) {
+            auto tracked_result = std::make_shared<Frame>(
+                result->camera_id,
+                result->frame_id,
+                result->timestamp,
+                result->mat
+            );
+            tracked_result->detections = state.tracker.getTrackedDetections();
+            grpc_server.sendDetectionResult(tracked_result);
+            state.last_detection_stream_frame_id = result->frame_id;
+        }
     }
 }
 }
@@ -232,9 +235,6 @@ int main() {
 
                     auto& pipeline_state = camera_states[id];
                     pipeline_state.tracker.advanceTo(frame->timestamp);
-                    if (kDetectionIntervalFrames > 1) {
-                        pipeline_state.tracker.observeFrame(frame->mat, frame->timestamp);
-                    }
 
                     grpc_server.sendLiveFrame(frame);
 
@@ -250,6 +250,7 @@ int main() {
                         );
                         tracked_frame->detections = pipeline_state.tracker.getTrackedDetections();
                         grpc_server.sendDetectionResult(tracked_frame);
+                        pipeline_state.last_detection_stream_frame_id = frame->frame_id;
                         --pipeline_state.frames_until_detection;
                     }
                 }
