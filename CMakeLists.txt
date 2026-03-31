@@ -85,6 +85,8 @@ set(GENERATED_SRC
 # ------------------------------
 add_executable(camera_cv_service
     src/main.cpp
+    src/byte_tracker.cpp
+    src/byte_tracker_lapjv.cpp
     src/camera_manager.cpp
     src/inference_engine.cpp
     src/grpc_server.cpp
