@@ -31,6 +31,9 @@
 #endif
 
 namespace {
+constexpr int kModelInputWidth = 640;
+constexpr int kModelInputHeight = 640;
+
 const std::vector<std::string> kCocoLabels = {
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
     "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
@@ -475,7 +478,7 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
     frame->detections.clear();
 
     cv::Mat infer_mat;
-    cv::resize(frame->mat, infer_mat, cv::Size(640, 640));
+    cv::resize(frame->mat, infer_mat, cv::Size(kModelInputWidth, kModelInputHeight));
     infer_mat.convertTo(infer_mat, CV_32F, 1.0 / 255.0);
     cv::cvtColor(infer_mat, infer_mat, cv::COLOR_BGR2RGB);
 
@@ -535,8 +538,8 @@ void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<
     const int num_classes = static_cast<int>(num_features - 4);
     const float* data = frame->inference_result.data();
 
-    const float scale_x = static_cast<float>(frame->mat.cols) / 640.0f;
-    const float scale_y = static_cast<float>(frame->mat.rows) / 640.0f;
+    const float scale_x = static_cast<float>(frame->mat.cols) / static_cast<float>(kModelInputWidth);
+    const float scale_y = static_cast<float>(frame->mat.rows) / static_cast<float>(kModelInputHeight);
 
     std::vector<cv::Rect> boxes;
     std::vector<float> scores;

@@ -31,7 +31,7 @@
 std::atomic<bool> g_running{true};
 
 namespace {
-constexpr int kDetectionIntervalFrames = 2;
+constexpr int kDetectionIntervalFrames = 1;
 
 struct CameraPipelineState {
     ByteTracker tracker;
