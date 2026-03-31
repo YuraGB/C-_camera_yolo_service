@@ -235,6 +235,9 @@ int main() {
 
                     auto& pipeline_state = camera_states[id];
                     pipeline_state.tracker.advanceTo(frame->timestamp);
+                    if (kDetectionIntervalFrames > 1) {
+                        pipeline_state.tracker.observeFrame(frame->mat, frame->timestamp);
+                    }
 
                     grpc_server.sendLiveFrame(frame);
 

@@ -6,6 +6,7 @@
 #include <map>
 #include <utility>
 
+#include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include "byte_tracker_lapjv.h"
@@ -613,7 +614,68 @@ cv::Rect2f ByteTracker::predictedRectForDisplay(const Track& track,
 }
 
 void ByteTracker::applyVisualTracking(const cv::Mat& gray_frame, int64_t timestamp_ms) {
-    const cv::Rect image_bounds(0, 0, previous_gray_frame_.cols, previous_gray_frame_.rows);
+    std::vector<cv::Point2f> previous_points;
+    cv::goodFeaturesToTrack(
+        previous_gray_frame_,
+        previous_points,
+        config_.optical_flow_max_corners,
+        config_.optical_flow_quality_level,
+        config_.optical_flow_min_distance);
+
+    if (static_cast<int>(previous_points.size()) < config_.optical_flow_min_points) {
+        return;
+    }
+
+    std::vector<cv::Point2f> current_points;
+    std::vector<unsigned char> status;
+    std::vector<float> errors;
+    cv::calcOpticalFlowPyrLK(
+        previous_gray_frame_,
+        gray_frame,
+        previous_points,
+        current_points,
+        status,
+        errors);
+
+    std::vector<cv::Point2f> matched_previous_points;
+    std::vector<cv::Point2f> matched_current_points;
+    matched_previous_points.reserve(previous_points.size());
+    matched_current_points.reserve(previous_points.size());
+    for (size_t i = 0; i < previous_points.size(); ++i) {
+        if (!status[i]) {
+            continue;
+        }
+        if (i < errors.size() && errors[i] > config_.optical_flow_max_error) {
+            continue;
+        }
+        matched_previous_points.push_back(previous_points[i]);
+        matched_current_points.push_back(current_points[i]);
+    }
+
+    if (static_cast<int>(matched_previous_points.size()) < config_.optical_flow_min_points) {
+        return;
+    }
+
+    cv::Mat inlier_mask;
+    cv::Mat affine = cv::estimateAffinePartial2D(
+        matched_previous_points,
+        matched_current_points,
+        inlier_mask,
+        cv::RANSAC,
+        config_.global_motion_ransac_threshold);
+
+    if (affine.empty() || affine.rows != 2 || affine.cols != 3) {
+        return;
+    }
+
+    const float a = static_cast<float>(affine.at<double>(0, 0));
+    const float b = static_cast<float>(affine.at<double>(0, 1));
+    const float tx = static_cast<float>(affine.at<double>(0, 2));
+    const float c = static_cast<float>(affine.at<double>(1, 0));
+    const float d = static_cast<float>(affine.at<double>(1, 1));
+    const float ty = static_cast<float>(affine.at<double>(1, 2));
+    const float scale_x = std::sqrt((a * a) + (c * c));
+    const float scale_y = std::sqrt((b * b) + (d * d));
 
     for (const auto& track : tracked_tracks_) {
         if (!track->is_activated || track->state != TrackState::Tracked) {
@@ -624,72 +686,24 @@ void ByteTracker::applyVisualTracking(const cv::Mat& gray_frame, int64_t timesta
             *track,
             timestamp_ms,
             config_.max_display_prediction_steps);
-        const cv::Rect roi = (cv::Rect(cvRound(predicted_rect.x),
-                                       cvRound(predicted_rect.y),
-                                       cvRound(predicted_rect.width),
-                                       cvRound(predicted_rect.height)) & image_bounds);
-        if (roi.width < 8 || roi.height < 8) {
-            continue;
-        }
+        const float center_x = predicted_rect.x + (predicted_rect.width * 0.5f);
+        const float center_y = predicted_rect.y + (predicted_rect.height * 0.5f);
+        const float transformed_center_x = (a * center_x) + (b * center_y) + tx;
+        const float transformed_center_y = (c * center_x) + (d * center_y) + ty;
+        const float transformed_width = predicted_rect.width * std::clamp(scale_x, 0.85f, 1.15f);
+        const float transformed_height = predicted_rect.height * std::clamp(scale_y, 0.85f, 1.15f);
 
-        cv::Mat mask = cv::Mat::zeros(previous_gray_frame_.size(), CV_8UC1);
-        cv::rectangle(mask, roi, cv::Scalar(255), cv::FILLED);
-
-        std::vector<cv::Point2f> previous_points;
-        cv::goodFeaturesToTrack(
-            previous_gray_frame_,
-            previous_points,
-            config_.optical_flow_max_corners,
-            config_.optical_flow_quality_level,
-            config_.optical_flow_min_distance,
-            mask);
-
-        if (static_cast<int>(previous_points.size()) < config_.optical_flow_min_points) {
-            continue;
-        }
-
-        std::vector<cv::Point2f> current_points;
-        std::vector<unsigned char> status;
-        std::vector<float> errors;
-        cv::calcOpticalFlowPyrLK(
-            previous_gray_frame_,
-            gray_frame,
-            previous_points,
-            current_points,
-            status,
-            errors);
-
-        std::vector<float> dxs;
-        std::vector<float> dys;
-        dxs.reserve(previous_points.size());
-        dys.reserve(previous_points.size());
-        for (size_t i = 0; i < previous_points.size(); ++i) {
-            if (!status[i]) {
-                continue;
-            }
-            if (i < errors.size() && errors[i] > config_.optical_flow_max_error) {
-                continue;
-            }
-            dxs.push_back(current_points[i].x - previous_points[i].x);
-            dys.push_back(current_points[i].y - previous_points[i].y);
-        }
-
-        if (static_cast<int>(dxs.size()) < config_.optical_flow_min_points) {
-            continue;
-        }
-
-        const float median_dx = median(dxs);
-        const float median_dy = median(dys);
         const float max_step = std::max(predicted_rect.width, predicted_rect.height) * config_.optical_flow_max_step_ratio;
-        if (std::abs(median_dx) > max_step || std::abs(median_dy) > max_step) {
+        if (std::abs(transformed_center_x - center_x) > max_step ||
+            std::abs(transformed_center_y - center_y) > max_step) {
             continue;
         }
 
         track->rect = sanitizeRect({
-            predicted_rect.x + median_dx,
-            predicted_rect.y + median_dy,
-            predicted_rect.width,
-            predicted_rect.height
+            transformed_center_x - (transformed_width * 0.5f),
+            transformed_center_y - (transformed_height * 0.5f),
+            transformed_width,
+            transformed_height
         });
         syncTrackStateToRect(track);
         updateDisplayRect(track, false);

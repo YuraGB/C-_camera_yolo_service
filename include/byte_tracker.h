@@ -26,12 +26,13 @@ public:
         float max_aspect_ratio = 8.0f;
         float max_display_prediction_steps = 2.0f;
         float display_smoothing_alpha = 0.65f;
-        int optical_flow_max_corners = 32;
+        int optical_flow_max_corners = 96;
         double optical_flow_quality_level = 0.01;
-        double optical_flow_min_distance = 5.0;
+        double optical_flow_min_distance = 8.0;
         float optical_flow_max_error = 12.0f;
-        int optical_flow_min_points = 8;
-        float optical_flow_max_step_ratio = 0.18f;
+        int optical_flow_min_points = 12;
+        float optical_flow_max_step_ratio = 0.35f;
+        double global_motion_ransac_threshold = 3.0;
     };
 
     explicit ByteTracker(Config config = {});
