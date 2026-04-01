@@ -29,8 +29,12 @@ public:
 private:
     void inferenceLoop();
     void processFrameImpl(std::shared_ptr<Frame> frame);
-    void parseYOLO(std::shared_ptr<Frame> frame, const std::vector<int64_t>& output_shape);
+    void parseYOLO(std::shared_ptr<Frame> frame,
+                   const std::vector<int64_t>& output_shape,
+                   int input_width,
+                   int input_height);
     void configureExecutionProvider();
+    void initializeModelMetadata();
     void parseDetectionsFromYOLO();
 
     std::string model_path_;
@@ -43,6 +47,10 @@ private:
     std::vector<const char*> input_names_;
     std::vector<std::string> output_names_str_;
     std::vector<const char*> output_names_;
+    std::vector<int64_t> model_input_shape_;
+    int model_input_width_ = 0;
+    int model_input_height_ = 0;
+    int model_input_channels_ = 3;
 
     std::thread inference_thread_;
     std::atomic<bool> running_{false};

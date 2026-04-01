@@ -176,6 +176,50 @@ void logProviders(const std::vector<std::string>& providers) {
 }
 }
 
+void InferenceEngine::initializeModelMetadata() {
+    model_input_shape_.clear();
+    model_input_width_ = 0;
+    model_input_height_ = 0;
+    model_input_channels_ = 3;
+
+    if (!session_ || session_->GetInputCount() == 0) {
+        std::cout << "[ONNX] Model input metadata is unavailable; using runtime defaults." << std::endl;
+        return;
+    }
+
+    try {
+        const auto input_info = session_->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
+        model_input_shape_ = input_info.GetShape();
+
+        if (model_input_shape_.size() >= 4) {
+            if (model_input_shape_[1] > 0) {
+                model_input_channels_ = static_cast<int>(model_input_shape_[1]);
+            }
+            if (model_input_shape_[2] > 0) {
+                model_input_height_ = static_cast<int>(model_input_shape_[2]);
+            }
+            if (model_input_shape_[3] > 0) {
+                model_input_width_ = static_cast<int>(model_input_shape_[3]);
+            }
+        }
+
+        std::cout << "[ONNX] Model input tensor shape:";
+        for (const auto dim : model_input_shape_) {
+            std::cout << " " << dim;
+        }
+        std::cout << std::endl;
+
+        if (model_input_width_ > 0 && model_input_height_ > 0) {
+            std::cout << "[ONNX] Using model input size "
+                      << model_input_width_ << "x" << model_input_height_ << std::endl;
+        } else {
+            std::cout << "[ONNX] Model input size is dynamic; frames will be resized at runtime." << std::endl;
+        }
+    } catch (const Ort::Exception& e) {
+        std::cerr << "[ONNX] Failed to inspect model input metadata: " << e.what() << std::endl;
+    }
+}
+
 InferenceEngine::InferenceEngine(const std::string& model_path)
     : model_path_(model_path),
       env_(ORT_LOGGING_LEVEL_WARNING, "InferenceEngine"),
@@ -227,6 +271,8 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
             std::cout << "[ONNX] Output " << i << ": " << output_names_[i] << std::endl;
         }
 
+        initializeModelMetadata();
+
     } catch (const Ort::Exception& e) {
         std::cerr << "[ONNX] Session creation failed with provider preference "
                   << selected_execution_provider_ << ": " << e.what() << std::endl;
@@ -263,6 +309,8 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
                     output_names_[i] = output_names_str_[i].c_str();
                     std::cout << "[ONNX] Output " << i << ": " << output_names_[i] << std::endl;
                 }
+
+                initializeModelMetadata();
             } catch (const Ort::Exception& fallback_error) {
                 std::cerr << "[ONNX] CPU fallback session creation failed: "
                           << fallback_error.what() << std::endl;
@@ -474,14 +522,25 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
 
     frame->detections.clear();
 
+    const int input_width = model_input_width_ > 0 ? model_input_width_ : std::max(1, frame->mat.cols);
+    const int input_height = model_input_height_ > 0 ? model_input_height_ : std::max(1, frame->mat.rows);
+
     cv::Mat infer_mat;
-    cv::resize(frame->mat, infer_mat, cv::Size(640, 640));
+    cv::resize(frame->mat, infer_mat, cv::Size(input_width, input_height));
     infer_mat.convertTo(infer_mat, CV_32F, 1.0 / 255.0);
     cv::cvtColor(infer_mat, infer_mat, cv::COLOR_BGR2RGB);
 
     Frame tmp_frame("", 0, 0, infer_mat);
     std::vector<float> input_tensor_values = tmp_frame.getDataCHW();
-    std::vector<int64_t> input_shape = {1, infer_mat.channels(), infer_mat.rows, infer_mat.cols};
+    std::vector<int64_t> input_shape = model_input_shape_;
+    if (input_shape.size() >= 4) {
+        input_shape[0] = (input_shape[0] > 0) ? input_shape[0] : 1;
+        input_shape[1] = (input_shape[1] > 0) ? input_shape[1] : infer_mat.channels();
+        input_shape[2] = (input_shape[2] > 0) ? input_shape[2] : infer_mat.rows;
+        input_shape[3] = (input_shape[3] > 0) ? input_shape[3] : infer_mat.cols;
+    } else {
+        input_shape = {1, infer_mat.channels(), infer_mat.rows, infer_mat.cols};
+    }
 
     try {
         Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -508,7 +567,7 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
             const auto output_shape = tensor_info.GetShape();
 
             frame->inference_result.assign(output_data, output_data + tensor_info.GetElementCount());
-            parseYOLO(frame, output_shape);
+            parseYOLO(frame, output_shape, infer_mat.cols, infer_mat.rows);
         }
 
     } catch (const Ort::Exception& e) {
@@ -516,7 +575,10 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
     }
 }
 
-void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<int64_t>& output_shape) {
+void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame,
+                                const std::vector<int64_t>& output_shape,
+                                int input_width,
+                                int input_height) {
     const float conf_threshold = 0.25f;
     const float iou_threshold = 0.45f;
     frame->detections.clear();
@@ -535,8 +597,8 @@ void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<
     const int num_classes = static_cast<int>(num_features - 4);
     const float* data = frame->inference_result.data();
 
-    const float scale_x = static_cast<float>(frame->mat.cols) / 640.0f;
-    const float scale_y = static_cast<float>(frame->mat.rows) / 640.0f;
+    const float scale_x = static_cast<float>(frame->mat.cols) / static_cast<float>(std::max(1, input_width));
+    const float scale_y = static_cast<float>(frame->mat.rows) / static_cast<float>(std::max(1, input_height));
 
     std::vector<cv::Rect> boxes;
     std::vector<float> scores;
