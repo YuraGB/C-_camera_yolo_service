@@ -1,9 +1,29 @@
 #include "camera_manager.h"
+#include <cmath>
 #include <iostream>
 #include <chrono>
 #include <thread>
 #include <opencv2/opencv.hpp>
 
+namespace {
+std::chrono::milliseconds resolveFrameInterval(cv::VideoCapture& cap) {
+    constexpr double kMinValidFps = 1.0;
+    constexpr double kMaxReasonableFps = 240.0;
+
+    const double source_fps = cap.get(cv::CAP_PROP_FPS);
+    if (source_fps >= kMinValidFps && source_fps <= kMaxReasonableFps) {
+        return std::chrono::milliseconds(
+            static_cast<int>(std::llround(1000.0 / source_fps))
+        );
+    }
+
+    return std::chrono::milliseconds::zero();
+}
+
+bool isFinitePositive(double value) {
+    return std::isfinite(value) && value > 0.0;
+}
+}
 
 CameraManager::CameraManager(InferenceEngine* engine)
     : inferenceEngine_(engine) {}
@@ -87,7 +107,17 @@ void CameraManager::captureLoop(const std::string& camera_id) {
     }
 
     int64_t frame_id = 0;
-    auto fps_delay = std::chrono::milliseconds(10);
+    const auto frame_interval = resolveFrameInterval(cam->cap);
+    const bool pace_capture = frame_interval.count() > 0 && isFinitePositive(cam->cap.get(cv::CAP_PROP_FRAME_COUNT));
+
+    if (frame_interval.count() > 0) {
+        std::cout << "[INFO] Source " << cam->source << " reported FPS="
+                  << cam->cap.get(cv::CAP_PROP_FPS)
+                  << ", pacing capture at " << frame_interval.count() << " ms/frame" << std::endl;
+    } else {
+        std::cout << "[INFO] Source " << cam->source
+                  << " did not report a usable FPS value; capture will run without artificial pacing" << std::endl;
+    }
 
     while (cam->running) {
         auto start_time = std::chrono::high_resolution_clock::now();
@@ -109,10 +139,13 @@ void CameraManager::captureLoop(const std::string& camera_id) {
 
         enqueueFrame(frame, *cam);
 
-        auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
-        auto sleep_time = fps_delay - std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-        if (sleep_time.count() > 0)
-            std::this_thread::sleep_for(sleep_time);
+        if (pace_capture) {
+            const auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+            const auto sleep_time = frame_interval - std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+            if (sleep_time.count() > 0) {
+                std::this_thread::sleep_for(sleep_time);
+            }
+        }
     }
 
     cam->cap.release();

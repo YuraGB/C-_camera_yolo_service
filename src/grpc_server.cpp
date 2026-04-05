@@ -7,7 +7,6 @@
 #include <vector>
 
 namespace {
-constexpr auto kLiveFrameInterval = std::chrono::milliseconds(1000 / 60);
 constexpr auto kDetectionFrameInterval = std::chrono::milliseconds(1000 / 60);
 constexpr int kLiveJpegQuality = 75;
 constexpr int kDetectionJpegQuality = 90;
@@ -23,7 +22,7 @@ grpc::Status DetectionServiceImpl::StreamLiveFrames(
     grpc::ServerContext* context,
     const google::protobuf::Empty* /*request*/,
     grpc::ServerWriter<detection::Frame>* writer) {
-  return streamFrames("StreamLiveFrames", live_stream_, context, writer, kLiveFrameInterval);
+  return streamFrames("StreamLiveFrames", live_stream_, context, writer, std::chrono::milliseconds::zero());
 }
 
 grpc::Status DetectionServiceImpl::StreamDetectionFrames(
@@ -56,7 +55,6 @@ grpc::Status DetectionServiceImpl::streamFrames(
 
   uint64_t last_seen_sequence = 0;
   auto last_send = std::chrono::steady_clock::now();
-
   while (!context->IsCancelled()) {
     std::shared_ptr<detection::Frame> frame;
 
@@ -74,12 +72,14 @@ grpc::Status DetectionServiceImpl::streamFrames(
       last_seen_sequence = state.sequence;
     }
 
-    const auto now = std::chrono::steady_clock::now();
-    const auto elapsed = now - last_send;
-    if (elapsed < min_frame_interval) {
-      std::this_thread::sleep_for(min_frame_interval - elapsed);
+    if (min_frame_interval.count() > 0) {
+      const auto now = std::chrono::steady_clock::now();
+      const auto elapsed = now - last_send;
+      if (elapsed < min_frame_interval) {
+        std::this_thread::sleep_for(min_frame_interval - elapsed);
+      }
+      last_send = std::chrono::steady_clock::now();
     }
-    last_send = std::chrono::steady_clock::now();
 
     if (!writer->Write(*frame)) {
       std::cout << "[gRPC] Client disconnected from " << stream_name
