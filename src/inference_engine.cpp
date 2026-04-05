@@ -1,6 +1,7 @@
 #include "inference_engine.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -52,6 +53,30 @@ std::string classIdToLabel(int class_id) {
 
 bool hasProvider(const std::vector<std::string>& providers, const char* provider_name) {
     return std::find(providers.begin(), providers.end(), provider_name) != providers.end();
+}
+
+std::string trimCopy(std::string value) {
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), value.end());
+    return value;
+}
+
+std::string describeProviderLoadFailure(const std::string& error_message) {
+    std::string message = trimCopy(error_message);
+
+    if (message.find("LoadLibrary failed with error 126") != std::string::npos) {
+        return message + " Missing dependent CUDA/cuDNN DLLs are the most likely cause.";
+    }
+
+    if (message.find("LoadLibrary failed with error 193") != std::string::npos) {
+        return message + " This usually means a 32-bit/64-bit mismatch in a dependent DLL.";
+    }
+
+    return message;
 }
 
 #ifdef _WIN32
@@ -182,6 +207,7 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
       session_options_(),
       running_(false)
 {
+    provider_fallback_reason_.clear();
     const auto cpu_threads = std::max(1u, std::thread::hardware_concurrency());
     auto configureBaseOptions = [cpu_threads](Ort::SessionOptions& options) {
         options.SetIntraOpNumThreads(static_cast<int>(cpu_threads));
@@ -232,13 +258,17 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
                   << selected_execution_provider_ << ": " << e.what() << std::endl;
 
         if (selected_execution_provider_ != "CPUExecutionProvider") {
+            const std::string previous_provider = selected_execution_provider_;
             try {
                 std::cout << "[ONNX] Retrying session creation with CPUExecutionProvider fallback" << std::endl;
                 Ort::SessionOptions cpu_session_options;
                 configureBaseOptions(cpu_session_options);
                 selected_execution_provider_ = "CPUExecutionProvider";
+                provider_fallback_reason_ =
+                    "Session creation failed for " + previous_provider + ": " + e.what();
                 session_ = std::make_unique<Ort::Session>(env_, wmodel_path.c_str(), cpu_session_options);
                 std::cout << "[ONNX] Session created successfully with CPUExecutionProvider fallback" << std::endl;
+                std::cout << "[ONNX] CPU fallback reason: " << provider_fallback_reason_ << std::endl;
 
                 Ort::AllocatorWithDefaultOptions allocator;
 
@@ -283,6 +313,7 @@ InferenceEngine::~InferenceEngine() {
 
 void InferenceEngine::configureExecutionProvider() {
     bool gpu_enabled = false;
+    provider_fallback_reason_.clear();
     const auto providers = Ort::GetAvailableProviders();
     logProviders(providers);
 
@@ -315,9 +346,11 @@ void InferenceEngine::configureExecutionProvider() {
         } catch (const Ort::Exception& e) {
             std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider: "
                       << e.what() << std::endl;
+            provider_fallback_reason_ = "CUDAExecutionProvider enable failed: " + std::string(e.what());
         } catch (const std::exception& e) {
             std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider: "
                       << e.what() << std::endl;
+            provider_fallback_reason_ = "CUDAExecutionProvider enable failed: " + std::string(e.what());
         }
     }
 #endif
@@ -339,6 +372,8 @@ void InferenceEngine::configureExecutionProvider() {
         } else {
             std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider via runtime symbol lookup: "
                       << error_message << std::endl;
+            provider_fallback_reason_ =
+                "CUDAExecutionProvider runtime load failed: " + describeProviderLoadFailure(error_message);
         }
     }
 #endif
@@ -354,9 +389,15 @@ void InferenceEngine::configureExecutionProvider() {
         } catch (const Ort::Exception& e) {
             std::cerr << "[ONNX] Failed to enable DmlExecutionProvider: "
                       << e.what() << std::endl;
+            if (provider_fallback_reason_.empty()) {
+                provider_fallback_reason_ = "DmlExecutionProvider enable failed: " + std::string(e.what());
+            }
         } catch (const std::exception& e) {
             std::cerr << "[ONNX] Failed to enable DmlExecutionProvider: "
                       << e.what() << std::endl;
+            if (provider_fallback_reason_.empty()) {
+                provider_fallback_reason_ = "DmlExecutionProvider enable failed: " + std::string(e.what());
+            }
         }
     }
 #endif
@@ -378,6 +419,10 @@ void InferenceEngine::configureExecutionProvider() {
         } else {
             std::cerr << "[ONNX] Failed to enable DmlExecutionProvider via runtime symbol lookup: "
                       << error_message << std::endl;
+            if (provider_fallback_reason_.empty()) {
+                provider_fallback_reason_ =
+                    "DmlExecutionProvider runtime load failed: " + describeProviderLoadFailure(error_message);
+            }
         }
     }
 #endif
@@ -385,6 +430,9 @@ void InferenceEngine::configureExecutionProvider() {
     if (!gpu_enabled) {
         selected_execution_provider_ = "CPUExecutionProvider";
         std::cout << "[ONNX] GPU execution provider not available, using CPUExecutionProvider" << std::endl;
+        if (!provider_fallback_reason_.empty()) {
+            std::cout << "[ONNX] CPU fallback reason: " << provider_fallback_reason_ << std::endl;
+        }
     }
 
     std::cout << "[ONNX] Selected execution provider preference: "
