@@ -9,8 +9,7 @@
 namespace {
 constexpr auto kLiveFrameInterval = std::chrono::milliseconds(1000 / 60);
 constexpr auto kDetectionFrameInterval = std::chrono::milliseconds(1000 / 60);
-constexpr int kLiveJpegQuality = 75;
-constexpr int kDetectionJpegQuality = 90;
+constexpr int kStreamJpegQuality = 80;
 }
 
 DetectionServiceImpl::DetectionServiceImpl() = default;
@@ -53,6 +52,7 @@ grpc::Status DetectionServiceImpl::streamFrames(
     grpc::ServerWriter<detection::Frame>* writer,
     std::chrono::milliseconds min_frame_interval) {
   std::cout << "[gRPC] " << stream_name << " started" << std::endl;
+  state.subscriber_count.fetch_add(1, std::memory_order_relaxed);
 
   uint64_t last_seen_sequence = 0;
   auto last_send = std::chrono::steady_clock::now();
@@ -88,6 +88,7 @@ grpc::Status DetectionServiceImpl::streamFrames(
     }
   }
 
+  state.subscriber_count.fetch_sub(1, std::memory_order_relaxed);
   std::cout << "[gRPC] " << stream_name << " finished" << std::endl;
   return grpc::Status::OK;
 }
@@ -101,6 +102,18 @@ void DetectionServiceImpl::publishFrame(StreamState& state, std::shared_ptr<dete
   state.latest_frame = std::move(frame);
   ++state.sequence;
   state.cv.notify_all();
+}
+
+bool DetectionServiceImpl::hasSubscribers(const StreamState& state) const {
+  return state.subscriber_count.load(std::memory_order_relaxed) > 0;
+}
+
+bool DetectionServiceImpl::hasLiveSubscribers() const {
+  return hasSubscribers(live_stream_);
+}
+
+bool DetectionServiceImpl::hasDetectionSubscribers() const {
+  return hasSubscribers(detection_stream_);
 }
 
 GRPCServer::GRPCServer(const std::string& server_address)
@@ -151,24 +164,24 @@ void GRPCServer::stop() {
 }
 
 void GRPCServer::sendLiveFrame(const std::shared_ptr<Frame>& frame) {
-  if (!service_ || !frame || frame->mat.empty()) {
+  if (!service_ || !frame || frame->mat.empty() || !service_->hasLiveSubscribers()) {
     return;
   }
 
-  service_->publishLiveFrame(buildProtoFrame(*frame, kLiveJpegQuality, false));
+  service_->publishLiveFrame(buildProtoFrame(*frame, true, false));
 }
 
 void GRPCServer::sendDetectionResult(const std::shared_ptr<Frame>& frame) {
-  if (!service_ || !frame || frame->mat.empty()) {
+  if (!service_ || !frame || frame->mat.empty() || !service_->hasDetectionSubscribers()) {
     return;
   }
 
-  service_->publishDetectionFrame(buildProtoFrame(*frame, kDetectionJpegQuality, true));
+  service_->publishDetectionFrame(buildProtoFrame(*frame, true, true));
 }
 
 std::shared_ptr<detection::Frame> GRPCServer::buildProtoFrame(
-    const Frame& frame,
-    int jpeg_quality,
+    Frame& frame,
+    bool reuse_encoded_jpeg,
     bool include_detections) const {
   auto proto_frame = std::make_shared<detection::Frame>();
   proto_frame->set_frame_id(static_cast<int32_t>(frame.frame_id));
@@ -176,10 +189,12 @@ std::shared_ptr<detection::Frame> GRPCServer::buildProtoFrame(
   proto_frame->set_camera_id(frame.camera_id);
 
   if (!frame.mat.empty()) {
-    std::vector<unsigned char> jpeg;
-    std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, jpeg_quality};
-    cv::imencode(".jpg", frame.mat, jpeg, params);
-    proto_frame->set_image(jpeg.data(), static_cast<int>(jpeg.size()));
+    if (!reuse_encoded_jpeg || frame.jpeg.empty()) {
+      frame.encodeJPEG(kStreamJpegQuality);
+    }
+    proto_frame->set_image(
+        reinterpret_cast<const char*>(frame.jpeg.data()),
+        static_cast<int>(frame.jpeg.size()));
   }
 
   if (include_detections) {
