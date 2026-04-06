@@ -11,8 +11,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ------------------------------
 # ONNX Runtime (розпакований вручну)
 # ------------------------------
-set(ONNXRUNTIME_INCLUDE_DIR "E:/tools/onnxruntime/include")
-set(ONNXRUNTIME_LIBRARY "E:/tools/onnxruntime/lib/onnxruntime.lib")
+set(ONNXRUNTIME_ROOT "E:/tools/onnxruntime1_18")
+set(ONNXRUNTIME_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/include")
+set(ONNXRUNTIME_LIBRARY "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
+set(ONNXRUNTIME_RUNTIME_DIR "${ONNXRUNTIME_ROOT}/lib")
 
 # Вказати шляхи до include та lib для OpenCV
 find_package(OpenCV REQUIRED)
@@ -104,7 +106,7 @@ target_include_directories(camera_cv_service PRIVATE
     E:/tools/vcpkg/installed/x64-windows/include
     E:/tools/vcpkg/installed/x64-windows/include/grpc
     E:/tools/vcpkg/installed/x64-windows/include/grpcpp
-    E:/tools/onnxruntime/include
+    ${ONNXRUNTIME_INCLUDE_DIR}
 )
 
 # ------------------------------
@@ -127,10 +129,29 @@ set_target_properties(camera_cv_service PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+set(ONNXRUNTIME_RUNTIME_DLLS
+    onnxruntime.dll
+    onnxruntime_providers_shared.dll
+    onnxruntime_providers_cuda.dll
+    onnxruntime_providers_tensorrt.dll
+)
+
+foreach(ORT_RUNTIME_DLL IN LISTS ONNXRUNTIME_RUNTIME_DLLS)
+    if(EXISTS "${ONNXRUNTIME_RUNTIME_DIR}/${ORT_RUNTIME_DLL}")
+        add_custom_command(TARGET camera_cv_service POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ONNXRUNTIME_RUNTIME_DIR}/${ORT_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:camera_cv_service>/${ORT_RUNTIME_DLL}"
+            COMMENT "Copying ${ORT_RUNTIME_DLL} to runtime output"
+        )
+    endif()
+endforeach()
+
 # ------------------------------
 # Статусні повідомлення
 # ------------------------------
 message(STATUS "OpenCV include dirs: ${OpenCV_INCLUDE_DIRS}")
 message(STATUS "ONNX Runtime include dir: ${ONNXRUNTIME_INCLUDE_DIR}")
+message(STATUS "ONNX Runtime runtime dir: ${ONNXRUNTIME_RUNTIME_DIR}")
 message(STATUS "Generated proto files dir: ${GENERATED_DIR}")
 message(STATUS "Protobuf include dir: ${PROTO_INCLUDE_DIR}")
