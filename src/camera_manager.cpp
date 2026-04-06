@@ -98,14 +98,13 @@ void CameraManager::captureLoop(const std::string& camera_id) {
             continue;
         }
 
-        auto frame = std::make_shared<Frame>(
-            camera_id,
-            frame_id++,
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()
-            ).count(),
-            mat
-        );
+        auto frame = std::make_shared<Frame>();
+        frame->camera_id = camera_id;
+        frame->frame_id = frame_id++;
+        frame->timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()
+        ).count();
+        frame->mat = std::move(mat);
 
         enqueueFrame(frame, *cam);
 

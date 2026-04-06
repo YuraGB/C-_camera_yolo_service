@@ -38,6 +38,8 @@ class DetectionServiceImpl final : public detection::DetectionService::Service {
   void publishLiveFrame(std::shared_ptr<detection::Frame> frame);
   void publishDetectionFrame(std::shared_ptr<detection::Frame> frame);
   void notifyAll();
+  bool hasLiveSubscribers() const;
+  bool hasDetectionSubscribers() const;
 
  private:
   struct StreamState {
@@ -45,6 +47,7 @@ class DetectionServiceImpl final : public detection::DetectionService::Service {
     std::condition_variable cv;
     std::shared_ptr<detection::Frame> latest_frame;
     uint64_t sequence = 0;
+    std::atomic<int> subscriber_count{0};
   };
 
   grpc::Status streamFrames(
@@ -55,6 +58,7 @@ class DetectionServiceImpl final : public detection::DetectionService::Service {
       std::chrono::milliseconds min_frame_interval);
 
   void publishFrame(StreamState& state, std::shared_ptr<detection::Frame> frame);
+  bool hasSubscribers(const StreamState& state) const;
 
   StreamState live_stream_;
   StreamState detection_stream_;
@@ -75,8 +79,8 @@ class GRPCServer {
 
  private:
   std::shared_ptr<detection::Frame> buildProtoFrame(
-      const Frame& frame,
-      int jpeg_quality,
+      Frame& frame,
+      bool reuse_encoded_jpeg,
       bool include_detections) const;
 
   std::string server_address_;
