@@ -674,8 +674,8 @@ class Frame final : public ::google::protobuf::Message
     kDetectionsFieldNumber = 4,
     kImageFieldNumber = 3,
     kCameraIdFieldNumber = 5,
-    kTimestampFieldNumber = 2,
     kFrameIdFieldNumber = 1,
+    kTimestampFieldNumber = 2,
   };
   // repeated .detection.Detection detections = 4;
   int detections_size() const;
@@ -724,6 +724,16 @@ class Frame final : public ::google::protobuf::Message
   ::std::string* PROTOBUF_NONNULL _internal_mutable_camera_id();
 
   public:
+  // int64 frame_id = 1;
+  void clear_frame_id() ;
+  ::int64_t frame_id() const;
+  void set_frame_id(::int64_t value);
+
+  private:
+  ::int64_t _internal_frame_id() const;
+  void _internal_set_frame_id(::int64_t value);
+
+  public:
   // int64 timestamp = 2;
   void clear_timestamp() ;
   ::int64_t timestamp() const;
@@ -732,16 +742,6 @@ class Frame final : public ::google::protobuf::Message
   private:
   ::int64_t _internal_timestamp() const;
   void _internal_set_timestamp(::int64_t value);
-
-  public:
-  // int32 frame_id = 1;
-  void clear_frame_id() ;
-  ::int32_t frame_id() const;
-  void set_frame_id(::int32_t value);
-
-  private:
-  ::int32_t _internal_frame_id() const;
-  void _internal_set_frame_id(::int32_t value);
 
   public:
   // @@protoc_insertion_point(class_scope:detection.Frame)
@@ -773,8 +773,8 @@ class Frame final : public ::google::protobuf::Message
     ::google::protobuf::RepeatedPtrField< ::detection::Detection > detections_;
     ::google::protobuf::internal::ArenaStringPtr image_;
     ::google::protobuf::internal::ArenaStringPtr camera_id_;
+    ::int64_t frame_id_;
     ::int64_t timestamp_;
-    ::int32_t frame_id_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -1096,27 +1096,27 @@ inline void Detection::set_allocated_bbox(::detection::BBox* PROTOBUF_NULLABLE v
 
 // Frame
 
-// int32 frame_id = 1;
+// int64 frame_id = 1;
 inline void Frame::clear_frame_id() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
-  _impl_.frame_id_ = 0;
+  _impl_.frame_id_ = ::int64_t{0};
   ClearHasBit(_impl_._has_bits_[0],
-                  0x00000010U);
+                  0x00000008U);
 }
-inline ::int32_t Frame::frame_id() const {
+inline ::int64_t Frame::frame_id() const {
   // @@protoc_insertion_point(field_get:detection.Frame.frame_id)
   return _internal_frame_id();
 }
-inline void Frame::set_frame_id(::int32_t value) {
+inline void Frame::set_frame_id(::int64_t value) {
   _internal_set_frame_id(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
   // @@protoc_insertion_point(field_set:detection.Frame.frame_id)
 }
-inline ::int32_t Frame::_internal_frame_id() const {
+inline ::int64_t Frame::_internal_frame_id() const {
   ::google::protobuf::internal::TSanRead(&_impl_);
   return _impl_.frame_id_;
 }
-inline void Frame::_internal_set_frame_id(::int32_t value) {
+inline void Frame::_internal_set_frame_id(::int64_t value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.frame_id_ = value;
 }
@@ -1126,7 +1126,7 @@ inline void Frame::clear_timestamp() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.timestamp_ = ::int64_t{0};
   ClearHasBit(_impl_._has_bits_[0],
-                  0x00000008U);
+                  0x00000010U);
 }
 inline ::int64_t Frame::timestamp() const {
   // @@protoc_insertion_point(field_get:detection.Frame.timestamp)
@@ -1134,7 +1134,7 @@ inline ::int64_t Frame::timestamp() const {
 }
 inline void Frame::set_timestamp(::int64_t value) {
   _internal_set_timestamp(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
   // @@protoc_insertion_point(field_set:detection.Frame.timestamp)
 }
 inline ::int64_t Frame::_internal_timestamp() const {

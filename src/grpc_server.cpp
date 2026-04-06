@@ -155,7 +155,12 @@ void GRPCServer::sendLiveFrame(const std::shared_ptr<Frame>& frame) {
     return;
   }
 
-  service_->publishLiveFrame(buildProtoFrame(*frame, kLiveJpegQuality, false));
+  auto proto_frame = buildProtoFrame(*frame, kLiveJpegQuality, false);
+  if (!proto_frame) {
+    return;
+  }
+
+  service_->publishLiveFrame(std::move(proto_frame));
 }
 
 void GRPCServer::sendDetectionResult(const std::shared_ptr<Frame>& frame) {
@@ -163,15 +168,31 @@ void GRPCServer::sendDetectionResult(const std::shared_ptr<Frame>& frame) {
     return;
   }
 
-  service_->publishDetectionFrame(buildProtoFrame(*frame, kDetectionJpegQuality, true));
+  auto proto_frame = buildProtoFrame(*frame, kDetectionJpegQuality, true);
+  if (!proto_frame) {
+    return;
+  }
+
+  service_->publishDetectionFrame(std::move(proto_frame));
 }
 
 std::shared_ptr<detection::Frame> GRPCServer::buildProtoFrame(
     const Frame& frame,
     int jpeg_quality,
     bool include_detections) const {
+  if (frame.camera_id.empty()) {
+    std::cerr << "[gRPC] Dropping frame with missing camera_id. frame_id=" << frame.frame_id << std::endl;
+    return nullptr;
+  }
+
+  if (frame.frame_id < 0) {
+    std::cerr << "[gRPC] Dropping frame with invalid frame_id=" << frame.frame_id
+              << " camera_id=" << frame.camera_id << std::endl;
+    return nullptr;
+  }
+
   auto proto_frame = std::make_shared<detection::Frame>();
-  proto_frame->set_frame_id(static_cast<int32_t>(frame.frame_id));
+  proto_frame->set_frame_id(frame.frame_id);
   proto_frame->set_timestamp(frame.timestamp);
   proto_frame->set_camera_id(frame.camera_id);
 

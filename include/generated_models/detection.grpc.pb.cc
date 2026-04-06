@@ -20,7 +20,6 @@
 #include <grpcpp/impl/service_type.h>
 #include <grpcpp/support/sync_stream.h>
 #include <grpcpp/ports_def.inc>
-
 namespace detection {
 
 static const char* DetectionService_method_names[] = {
@@ -28,117 +27,90 @@ static const char* DetectionService_method_names[] = {
   "/detection.DetectionService/StreamDetectionFrames",
 };
 
-std::unique_ptr<DetectionService::Stub> DetectionService::NewStub(
-    const std::shared_ptr<::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options) {
+std::unique_ptr< DetectionService::Stub> DetectionService::NewStub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options) {
   (void)options;
-  std::unique_ptr<DetectionService::Stub> stub(new DetectionService::Stub(channel, options));
+  std::unique_ptr< DetectionService::Stub> stub(new DetectionService::Stub(channel, options));
   return stub;
 }
 
-DetectionService::Stub::Stub(const std::shared_ptr<::grpc::ChannelInterface>& channel,
-                             const ::grpc::StubOptions& options)
-    : channel_(channel),
-      rpcmethod_StreamLiveFrames_(DetectionService_method_names[0], options.suffix_for_stats(),
-                                  ::grpc::internal::RpcMethod::SERVER_STREAMING, channel),
-      rpcmethod_StreamDetectionFrames_(DetectionService_method_names[1], options.suffix_for_stats(),
-                                       ::grpc::internal::RpcMethod::SERVER_STREAMING, channel) {}
+DetectionService::Stub::Stub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options)
+  : channel_(channel), rpcmethod_StreamLiveFrames_(DetectionService_method_names[0], options.suffix_for_stats(),::grpc::internal::RpcMethod::SERVER_STREAMING, channel)
+  , rpcmethod_StreamDetectionFrames_(DetectionService_method_names[1], options.suffix_for_stats(),::grpc::internal::RpcMethod::SERVER_STREAMING, channel)
+  {}
 
-::grpc::ClientReader<::detection::Frame>* DetectionService::Stub::StreamLiveFramesRaw(
-    ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
-  return ::grpc::internal::ClientReaderFactory<::detection::Frame>::Create(
-      channel_.get(), rpcmethod_StreamLiveFrames_, context, request);
+::grpc::ClientReader< ::detection::Frame>* DetectionService::Stub::StreamLiveFramesRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
+  return ::grpc::internal::ClientReaderFactory< ::detection::Frame>::Create(channel_.get(), rpcmethod_StreamLiveFrames_, context, request);
 }
 
-void DetectionService::Stub::async::StreamLiveFrames(
-    ::grpc::ClientContext* context, const ::google::protobuf::Empty* request,
-    ::grpc::ClientReadReactor<::detection::Frame>* reactor) {
-  ::grpc::internal::ClientCallbackReaderFactory<::detection::Frame>::Create(
-      stub_->channel_.get(), stub_->rpcmethod_StreamLiveFrames_, context, request, reactor);
+void DetectionService::Stub::async::StreamLiveFrames(::grpc::ClientContext* context, const ::google::protobuf::Empty* request, ::grpc::ClientReadReactor< ::detection::Frame>* reactor) {
+  ::grpc::internal::ClientCallbackReaderFactory< ::detection::Frame>::Create(stub_->channel_.get(), stub_->rpcmethod_StreamLiveFrames_, context, request, reactor);
 }
 
-::grpc::ClientAsyncReader<::detection::Frame>* DetectionService::Stub::AsyncStreamLiveFramesRaw(
-    ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
-    ::grpc::CompletionQueue* cq, void* tag) {
-  return ::grpc::internal::ClientAsyncReaderFactory<::detection::Frame>::Create(
-      channel_.get(), cq, rpcmethod_StreamLiveFrames_, context, request, true, tag);
+::grpc::ClientAsyncReader< ::detection::Frame>* DetectionService::Stub::AsyncStreamLiveFramesRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq, void* tag) {
+  return ::grpc::internal::ClientAsyncReaderFactory< ::detection::Frame>::Create(channel_.get(), cq, rpcmethod_StreamLiveFrames_, context, request, true, tag);
 }
 
-::grpc::ClientAsyncReader<::detection::Frame>* DetectionService::Stub::PrepareAsyncStreamLiveFramesRaw(
-    ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
-    ::grpc::CompletionQueue* cq) {
-  return ::grpc::internal::ClientAsyncReaderFactory<::detection::Frame>::Create(
-      channel_.get(), cq, rpcmethod_StreamLiveFrames_, context, request, false, nullptr);
+::grpc::ClientAsyncReader< ::detection::Frame>* DetectionService::Stub::PrepareAsyncStreamLiveFramesRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncReaderFactory< ::detection::Frame>::Create(channel_.get(), cq, rpcmethod_StreamLiveFrames_, context, request, false, nullptr);
 }
 
-::grpc::ClientReader<::detection::Frame>* DetectionService::Stub::StreamDetectionFramesRaw(
-    ::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
-  return ::grpc::internal::ClientReaderFactory<::detection::Frame>::Create(
-      channel_.get(), rpcmethod_StreamDetectionFrames_, context, request);
+::grpc::ClientReader< ::detection::Frame>* DetectionService::Stub::StreamDetectionFramesRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request) {
+  return ::grpc::internal::ClientReaderFactory< ::detection::Frame>::Create(channel_.get(), rpcmethod_StreamDetectionFrames_, context, request);
 }
 
-void DetectionService::Stub::async::StreamDetectionFrames(
-    ::grpc::ClientContext* context, const ::google::protobuf::Empty* request,
-    ::grpc::ClientReadReactor<::detection::Frame>* reactor) {
-  ::grpc::internal::ClientCallbackReaderFactory<::detection::Frame>::Create(
-      stub_->channel_.get(), stub_->rpcmethod_StreamDetectionFrames_, context, request, reactor);
+void DetectionService::Stub::async::StreamDetectionFrames(::grpc::ClientContext* context, const ::google::protobuf::Empty* request, ::grpc::ClientReadReactor< ::detection::Frame>* reactor) {
+  ::grpc::internal::ClientCallbackReaderFactory< ::detection::Frame>::Create(stub_->channel_.get(), stub_->rpcmethod_StreamDetectionFrames_, context, request, reactor);
 }
 
-::grpc::ClientAsyncReader<::detection::Frame>* DetectionService::Stub::AsyncStreamDetectionFramesRaw(
-    ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
-    ::grpc::CompletionQueue* cq, void* tag) {
-  return ::grpc::internal::ClientAsyncReaderFactory<::detection::Frame>::Create(
-      channel_.get(), cq, rpcmethod_StreamDetectionFrames_, context, request, true, tag);
+::grpc::ClientAsyncReader< ::detection::Frame>* DetectionService::Stub::AsyncStreamDetectionFramesRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq, void* tag) {
+  return ::grpc::internal::ClientAsyncReaderFactory< ::detection::Frame>::Create(channel_.get(), cq, rpcmethod_StreamDetectionFrames_, context, request, true, tag);
 }
 
-::grpc::ClientAsyncReader<::detection::Frame>* DetectionService::Stub::PrepareAsyncStreamDetectionFramesRaw(
-    ::grpc::ClientContext* context, const ::google::protobuf::Empty& request,
-    ::grpc::CompletionQueue* cq) {
-  return ::grpc::internal::ClientAsyncReaderFactory<::detection::Frame>::Create(
-      channel_.get(), cq, rpcmethod_StreamDetectionFrames_, context, request, false, nullptr);
+::grpc::ClientAsyncReader< ::detection::Frame>* DetectionService::Stub::PrepareAsyncStreamDetectionFramesRaw(::grpc::ClientContext* context, const ::google::protobuf::Empty& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncReaderFactory< ::detection::Frame>::Create(channel_.get(), cq, rpcmethod_StreamDetectionFrames_, context, request, false, nullptr);
 }
 
 DetectionService::Service::Service() {
   AddMethod(new ::grpc::internal::RpcServiceMethod(
-      DetectionService_method_names[0], ::grpc::internal::RpcMethod::SERVER_STREAMING,
-      new ::grpc::internal::ServerStreamingHandler<DetectionService::Service, ::google::protobuf::Empty,
-                                                   ::detection::Frame>(
-          [](DetectionService::Service* service, ::grpc::ServerContext* ctx,
-             const ::google::protobuf::Empty* req, ::grpc::ServerWriter<::detection::Frame>* writer) {
-            return service->StreamLiveFrames(ctx, req, writer);
-          },
-          this)));
-
+      DetectionService_method_names[0],
+      ::grpc::internal::RpcMethod::SERVER_STREAMING,
+      new ::grpc::internal::ServerStreamingHandler< DetectionService::Service, ::google::protobuf::Empty, ::detection::Frame>(
+          [](DetectionService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::google::protobuf::Empty* req,
+             ::grpc::ServerWriter<::detection::Frame>* writer) {
+               return service->StreamLiveFrames(ctx, req, writer);
+             }, this)));
   AddMethod(new ::grpc::internal::RpcServiceMethod(
-      DetectionService_method_names[1], ::grpc::internal::RpcMethod::SERVER_STREAMING,
-      new ::grpc::internal::ServerStreamingHandler<DetectionService::Service, ::google::protobuf::Empty,
-                                                   ::detection::Frame>(
-          [](DetectionService::Service* service, ::grpc::ServerContext* ctx,
-             const ::google::protobuf::Empty* req, ::grpc::ServerWriter<::detection::Frame>* writer) {
-            return service->StreamDetectionFrames(ctx, req, writer);
-          },
-          this)));
+      DetectionService_method_names[1],
+      ::grpc::internal::RpcMethod::SERVER_STREAMING,
+      new ::grpc::internal::ServerStreamingHandler< DetectionService::Service, ::google::protobuf::Empty, ::detection::Frame>(
+          [](DetectionService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::google::protobuf::Empty* req,
+             ::grpc::ServerWriter<::detection::Frame>* writer) {
+               return service->StreamDetectionFrames(ctx, req, writer);
+             }, this)));
 }
 
-DetectionService::Service::~Service() {}
+DetectionService::Service::~Service() {
+}
 
-::grpc::Status DetectionService::Service::StreamLiveFrames(
-    ::grpc::ServerContext* context, const ::google::protobuf::Empty* request,
-    ::grpc::ServerWriter<::detection::Frame>* writer) {
-  (void)context;
-  (void)request;
-  (void)writer;
+::grpc::Status DetectionService::Service::StreamLiveFrames(::grpc::ServerContext* context, const ::google::protobuf::Empty* request, ::grpc::ServerWriter< ::detection::Frame>* writer) {
+  (void) context;
+  (void) request;
+  (void) writer;
   return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
 }
 
-::grpc::Status DetectionService::Service::StreamDetectionFrames(
-    ::grpc::ServerContext* context, const ::google::protobuf::Empty* request,
-    ::grpc::ServerWriter<::detection::Frame>* writer) {
-  (void)context;
-  (void)request;
-  (void)writer;
+::grpc::Status DetectionService::Service::StreamDetectionFrames(::grpc::ServerContext* context, const ::google::protobuf::Empty* request, ::grpc::ServerWriter< ::detection::Frame>* writer) {
+  (void) context;
+  (void) request;
+  (void) writer;
   return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
 }
+
 
 }  // namespace detection
-
 #include <grpcpp/ports_undef.inc>
+

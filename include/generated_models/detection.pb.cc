@@ -93,8 +93,8 @@ inline constexpr Frame::Impl_::Impl_(
         camera_id_(
             &::google::protobuf::internal::fixed_address_empty_string,
             ::_pbi::ConstantInitialized()),
-        timestamp_{::int64_t{0}},
-        frame_id_{0} {}
+        frame_id_{::int64_t{0}},
+        timestamp_{::int64_t{0}} {}
 
 template <typename>
 PROTOBUF_CONSTEXPR Frame::Frame(::_pbi::ConstantInitialized)
@@ -151,8 +151,8 @@ const ::uint32_t
         PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.image_),
         PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.detections_),
         PROTOBUF_FIELD_OFFSET(::detection::Frame, _impl_.camera_id_),
-        4,
         3,
+        4,
         1,
         0,
         2,
@@ -176,7 +176,7 @@ const char descriptor_table_protodef_detection_2eproto[] ABSL_ATTRIBUTE_SECTION_
     "y\030\002 \001(\005\022\r\n\005width\030\003 \001(\005\022\016\n\006height\030\004 \001(\005\"M"
     "\n\tDetection\022\r\n\005label\030\001 \001(\t\022\022\n\nconfidence"
     "\030\002 \001(\002\022\035\n\004bbox\030\003 \001(\0132\017.detection.BBox\"x\n"
-    "\005Frame\022\020\n\010frame_id\030\001 \001(\005\022\021\n\ttimestamp\030\002 "
+    "\005Frame\022\020\n\010frame_id\030\001 \001(\003\022\021\n\ttimestamp\030\002 "
     "\001(\003\022\r\n\005image\030\003 \001(\014\022(\n\ndetections\030\004 \003(\0132\024"
     ".detection.Detection\022\021\n\tcamera_id\030\005 \001(\t2"
     "\227\001\n\020DetectionService\022>\n\020StreamLiveFrames"
@@ -956,12 +956,12 @@ Frame::Frame(
       from._internal_metadata_);
   new (&_impl_) Impl_(internal_visibility(), arena, from._impl_, from);
   ::memcpy(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, timestamp_),
+               offsetof(Impl_, frame_id_),
            reinterpret_cast<const char*>(&from._impl_) +
-               offsetof(Impl_, timestamp_),
-           offsetof(Impl_, frame_id_) -
-               offsetof(Impl_, timestamp_) +
-               sizeof(Impl_::frame_id_));
+               offsetof(Impl_, frame_id_),
+           offsetof(Impl_, timestamp_) -
+               offsetof(Impl_, frame_id_) +
+               sizeof(Impl_::timestamp_));
 
   // @@protoc_insertion_point(copy_constructor:detection.Frame)
 }
@@ -976,11 +976,11 @@ PROTOBUF_NDEBUG_INLINE Frame::Impl_::Impl_(
 inline void Frame::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   new (&_impl_) Impl_(internal_visibility(), arena);
   ::memset(reinterpret_cast<char*>(&_impl_) +
-               offsetof(Impl_, timestamp_),
+               offsetof(Impl_, frame_id_),
            0,
-           offsetof(Impl_, frame_id_) -
-               offsetof(Impl_, timestamp_) +
-               sizeof(Impl_::frame_id_));
+           offsetof(Impl_, timestamp_) -
+               offsetof(Impl_, frame_id_) +
+               sizeof(Impl_::timestamp_));
 }
 Frame::~Frame() {
   // @@protoc_insertion_point(destructor:detection.Frame)
@@ -1073,13 +1073,13 @@ Frame::_table_ = {
     #endif  // PROTOBUF_PREFETCH_PARSE_TABLE
   }, {{
     {::_pbi::TcParser::MiniParse, {}},
-    // int32 frame_id = 1;
-    {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(Frame, _impl_.frame_id_), 4>(),
-     {8, 4, 0,
+    // int64 frame_id = 1;
+    {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(Frame, _impl_.frame_id_), 3>(),
+     {8, 3, 0,
       PROTOBUF_FIELD_OFFSET(Frame, _impl_.frame_id_)}},
     // int64 timestamp = 2;
-    {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(Frame, _impl_.timestamp_), 3>(),
-     {16, 3, 0,
+    {::_pbi::TcParser::SingularVarintNoZag1<::uint64_t, offsetof(Frame, _impl_.timestamp_), 4>(),
+     {16, 4, 0,
       PROTOBUF_FIELD_OFFSET(Frame, _impl_.timestamp_)}},
     // bytes image = 3;
     {::_pbi::TcParser::FastBS1,
@@ -1098,10 +1098,10 @@ Frame::_table_ = {
   }}, {{
     65535, 65535
   }}, {{
-    // int32 frame_id = 1;
-    {PROTOBUF_FIELD_OFFSET(Frame, _impl_.frame_id_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt32)},
+    // int64 frame_id = 1;
+    {PROTOBUF_FIELD_OFFSET(Frame, _impl_.frame_id_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
     // int64 timestamp = 2;
-    {PROTOBUF_FIELD_OFFSET(Frame, _impl_.timestamp_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
+    {PROTOBUF_FIELD_OFFSET(Frame, _impl_.timestamp_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kInt64)},
     // bytes image = 3;
     {PROTOBUF_FIELD_OFFSET(Frame, _impl_.image_), _Internal::kHasBitsOffset + 1, 0, (0 | ::_fl::kFcOptional | ::_fl::kBytes | ::_fl::kRepAString)},
     // repeated .detection.Detection detections = 4;
@@ -1138,9 +1138,9 @@ PROTOBUF_NOINLINE void Frame::Clear() {
     }
   }
   if (BatchCheckHasBit(cached_has_bits, 0x00000018U)) {
-    ::memset(&_impl_.timestamp_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.frame_id_) -
-        reinterpret_cast<char*>(&_impl_.timestamp_)) + sizeof(_impl_.frame_id_));
+    ::memset(&_impl_.frame_id_, 0, static_cast<::size_t>(
+        reinterpret_cast<char*>(&_impl_.timestamp_) -
+        reinterpret_cast<char*>(&_impl_.frame_id_)) + sizeof(_impl_.timestamp_));
   }
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
@@ -1165,17 +1165,17 @@ PROTOBUF_NOINLINE void Frame::Clear() {
   (void)cached_has_bits;
 
   cached_has_bits = this_._impl_._has_bits_[0];
-  // int32 frame_id = 1;
-  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+  // int64 frame_id = 1;
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
     if (this_._internal_frame_id() != 0) {
       target =
-          ::google::protobuf::internal::WireFormatLite::WriteInt32ToArrayWithField<1>(
+          ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<1>(
               stream, this_._internal_frame_id(), target);
     }
   }
 
   // int64 timestamp = 2;
-  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
     if (this_._internal_timestamp() != 0) {
       target =
           ::google::protobuf::internal::WireFormatLite::WriteInt64ToArrayWithField<2>(
@@ -1261,18 +1261,18 @@ PROTOBUF_NOINLINE void Frame::Clear() {
                                         this_._internal_camera_id());
       }
     }
-    // int64 timestamp = 2;
+    // int64 frame_id = 1;
     if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (this_._internal_frame_id() != 0) {
+        total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
+            this_._internal_frame_id());
+      }
+    }
+    // int64 timestamp = 2;
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
       if (this_._internal_timestamp() != 0) {
         total_size += ::_pbi::WireFormatLite::Int64SizePlusOne(
             this_._internal_timestamp());
-      }
-    }
-    // int32 frame_id = 1;
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
-      if (this_._internal_frame_id() != 0) {
-        total_size += ::_pbi::WireFormatLite::Int32SizePlusOne(
-            this_._internal_frame_id());
       }
     }
   }
@@ -1320,13 +1320,13 @@ void Frame::MergeImpl(::google::protobuf::MessageLite& to_msg,
       }
     }
     if (CheckHasBit(cached_has_bits, 0x00000008U)) {
-      if (from._internal_timestamp() != 0) {
-        _this->_impl_.timestamp_ = from._impl_.timestamp_;
+      if (from._internal_frame_id() != 0) {
+        _this->_impl_.frame_id_ = from._impl_.frame_id_;
       }
     }
     if (CheckHasBit(cached_has_bits, 0x00000010U)) {
-      if (from._internal_frame_id() != 0) {
-        _this->_impl_.frame_id_ = from._impl_.frame_id_;
+      if (from._internal_timestamp() != 0) {
+        _this->_impl_.timestamp_ = from._impl_.timestamp_;
       }
     }
   }
@@ -1353,11 +1353,11 @@ void Frame::InternalSwap(Frame* PROTOBUF_RESTRICT PROTOBUF_NONNULL other) {
   ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.image_, &other->_impl_.image_, arena);
   ::_pbi::ArenaStringPtr::InternalSwap(&_impl_.camera_id_, &other->_impl_.camera_id_, arena);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(Frame, _impl_.frame_id_)
-      + sizeof(Frame::_impl_.frame_id_)
-      - PROTOBUF_FIELD_OFFSET(Frame, _impl_.timestamp_)>(
-          reinterpret_cast<char*>(&_impl_.timestamp_),
-          reinterpret_cast<char*>(&other->_impl_.timestamp_));
+      PROTOBUF_FIELD_OFFSET(Frame, _impl_.timestamp_)
+      + sizeof(Frame::_impl_.timestamp_)
+      - PROTOBUF_FIELD_OFFSET(Frame, _impl_.frame_id_)>(
+          reinterpret_cast<char*>(&_impl_.frame_id_),
+          reinterpret_cast<char*>(&other->_impl_.frame_id_));
 }
 
 ::google::protobuf::Metadata Frame::GetMetadata() const {

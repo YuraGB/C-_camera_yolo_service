@@ -96,6 +96,26 @@ void drainDetectionResults(
         grpc_server.sendDetectionResult(result);
     }
 }
+
+void detectionPublishLoop(
+    InferenceEngine& inference_engine,
+    GRPCServer& grpc_server,
+    const std::atomic<bool>& running)
+{
+    while (running.load()) {
+        bool published_any = false;
+        while (auto result = inference_engine.getResult()) {
+            grpc_server.sendDetectionResult(result);
+            published_any = true;
+        }
+
+        if (!published_any) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+    drainDetectionResults(inference_engine, grpc_server);
+}
 }
 
 void signalHandler(int signum) {
@@ -185,29 +205,28 @@ int main() {
         camera_manager.startAllCameras();
         inference_engine.start();
         grpc_server.start();
+        std::thread detection_publish_thread(
+            detectionPublishLoop,
+            std::ref(inference_engine),
+            std::ref(grpc_server),
+            std::cref(g_running));
 
         std::cout << "[INFO] Service started. Processing frames..." << std::endl;
-
-        int64_t global_frame_counter = 0;
 
         while (g_running) {
             bool captured_any_frame = false;
 
             auto processFrames = [&](const std::vector<std::string>& ids) {
                 for (const auto& id : ids) {
-                    drainDetectionResults(inference_engine, grpc_server);
-
                     auto frame = camera_manager.getLatestFrame(id);
                     if (!frame) {
                         continue;
                     }
 
                     captured_any_frame = true;
-                    frame->camera_id = id;
-                    frame->frame_id = global_frame_counter++;
-                    frame->timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()
-                    ).count();
+                    if (frame->camera_id.empty()) {
+                        frame->camera_id = id;
+                    }
 
                     grpc_server.sendLiveFrame(frame);
                     inference_engine.processFrame(frame);
@@ -216,7 +235,6 @@ int main() {
 
             processFrames(camera_ids);
             processFrames(video_ids);
-            drainDetectionResults(inference_engine, grpc_server);
 
             if (!captured_any_frame) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -224,7 +242,9 @@ int main() {
         }
 
         std::cout << "[INFO] Stopping services..." << std::endl;
-        drainDetectionResults(inference_engine, grpc_server);
+        if (detection_publish_thread.joinable()) {
+            detection_publish_thread.join();
+        }
         camera_manager.stopAllCameras();
         inference_engine.stop();
         grpc_server.stop();

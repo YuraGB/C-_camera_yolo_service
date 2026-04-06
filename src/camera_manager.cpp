@@ -109,6 +109,10 @@ void CameraManager::captureLoop(const std::string& camera_id) {
     int64_t frame_id = 0;
     const auto frame_interval = resolveFrameInterval(cam->cap);
     const bool pace_capture = frame_interval.count() > 0 && isFinitePositive(cam->cap.get(cv::CAP_PROP_FRAME_COUNT));
+    const int64_t playback_epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    double first_source_pos_msec = -1.0;
 
     if (frame_interval.count() > 0) {
         std::cout << "[INFO] Source " << cam->source << " reported FPS="
@@ -128,12 +132,27 @@ void CameraManager::captureLoop(const std::string& camera_id) {
             continue;
         }
 
+        int64_t timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()
+        ).count();
+
+        if (pace_capture) {
+            const double source_pos_msec = cam->cap.get(cv::CAP_PROP_POS_MSEC);
+            if (source_pos_msec >= 0.0) {
+                if (first_source_pos_msec < 0.0) {
+                    first_source_pos_msec = source_pos_msec;
+                }
+
+                timestamp_ms = playback_epoch_ms + static_cast<int64_t>(
+                    std::llround(source_pos_msec - first_source_pos_msec)
+                );
+            }
+        }
+
         auto frame = std::make_shared<Frame>(
             camera_id,
             frame_id++,
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()
-            ).count(),
+            timestamp_ms,
             mat
         );
 
