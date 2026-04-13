@@ -197,11 +197,15 @@ std::shared_ptr<detection::Frame> GRPCServer::buildProtoFrame(
         static_cast<int>(frame.jpeg.size()));
   }
 
-  if (include_detections) {
-    for (const auto& det : frame.detections) {
-      auto* proto_det = proto_frame->add_detections();
-      proto_det->set_label(det.label);
-      proto_det->set_confidence(det.confidence);
+    if (include_detections) {
+      for (const auto& det : frame.detections) {
+        auto* proto_det = proto_frame->add_detections();
+        if (det.track_id >= 0) {
+          proto_det->set_label(det.label + "#" + std::to_string(det.track_id));
+        } else {
+          proto_det->set_label(det.label);
+        }
+        proto_det->set_confidence(det.confidence);
 
       auto* proto_bbox = proto_det->mutable_bbox();
       proto_bbox->set_x(det.bbox.x);

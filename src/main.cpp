@@ -5,6 +5,7 @@
 #include <csignal>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include <filesystem>
 #include <stdexcept>
 
@@ -23,12 +24,21 @@
 #endif
 
 #include "inference_engine.h"
+#include "byte_tracker.h"
 #include "camera_manager.h"
 #include "grpc_server.h"
 
 std::atomic<bool> g_running{true};
 
 namespace {
+constexpr int kDetectionIntervalFrames = 2;
+
+struct CameraPipelineState {
+    ByteTracker tracker;
+    int frames_until_detection = 0;
+    int64_t last_detection_stream_frame_id = -1;
+};
+
 std::filesystem::path getExecutableDir() {
 #ifdef _WIN32
     std::wstring buffer(MAX_PATH, L'\0');
@@ -90,10 +100,23 @@ std::filesystem::path resolveExistingPath(const std::string& raw_path) {
 
 void drainDetectionResults(
     InferenceEngine& inference_engine,
+    std::unordered_map<std::string, CameraPipelineState>& camera_states,
     GRPCServer& grpc_server)
 {
     while (auto result = inference_engine.getResult()) {
-        grpc_server.sendDetectionResult(result);
+        auto& state = camera_states[result->camera_id];
+        state.tracker.updateWithDetections(result->detections, result->timestamp);
+        if (result->frame_id >= state.last_detection_stream_frame_id) {
+            auto tracked_result = std::make_shared<Frame>(
+                result->camera_id,
+                result->frame_id,
+                result->timestamp,
+                result->mat
+            );
+            tracked_result->detections = state.tracker.getTrackedDetections();
+            grpc_server.sendDetectionResult(tracked_result);
+            state.last_detection_stream_frame_id = result->frame_id;
+        }
     }
 }
 }
@@ -189,13 +212,14 @@ int main() {
         std::cout << "[INFO] Service started. Processing frames..." << std::endl;
 
         int64_t global_frame_counter = 0;
+        std::unordered_map<std::string, CameraPipelineState> camera_states;
 
         while (g_running) {
             bool captured_any_frame = false;
 
             auto processFrames = [&](const std::vector<std::string>& ids) {
                 for (const auto& id : ids) {
-                    drainDetectionResults(inference_engine, grpc_server);
+                    drainDetectionResults(inference_engine, camera_states, grpc_server);
 
                     auto frame = camera_manager.getLatestFrame(id);
                     if (!frame) {
@@ -209,14 +233,35 @@ int main() {
                         std::chrono::system_clock::now().time_since_epoch()
                     ).count();
 
+                    auto& pipeline_state = camera_states[id];
+                    pipeline_state.tracker.advanceTo(frame->timestamp);
+                    if (kDetectionIntervalFrames > 1) {
+                        pipeline_state.tracker.observeFrame(frame->mat, frame->timestamp);
+                    }
+
                     grpc_server.sendLiveFrame(frame);
-                    inference_engine.processFrame(frame);
+
+                    if (pipeline_state.frames_until_detection <= 0) {
+                        inference_engine.processFrame(frame);
+                        pipeline_state.frames_until_detection = kDetectionIntervalFrames - 1;
+                    } else {
+                        auto tracked_frame = std::make_shared<Frame>(
+                            frame->camera_id,
+                            frame->frame_id,
+                            frame->timestamp,
+                            frame->mat
+                        );
+                        tracked_frame->detections = pipeline_state.tracker.getTrackedDetections();
+                        grpc_server.sendDetectionResult(tracked_frame);
+                        pipeline_state.last_detection_stream_frame_id = frame->frame_id;
+                        --pipeline_state.frames_until_detection;
+                    }
                 }
             };
 
             processFrames(camera_ids);
             processFrames(video_ids);
-            drainDetectionResults(inference_engine, grpc_server);
+            drainDetectionResults(inference_engine, camera_states, grpc_server);
 
             if (!captured_any_frame) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -224,7 +269,7 @@ int main() {
         }
 
         std::cout << "[INFO] Stopping services..." << std::endl;
-        drainDetectionResults(inference_engine, grpc_server);
+        drainDetectionResults(inference_engine, camera_states, grpc_server);
         camera_manager.stopAllCameras();
         inference_engine.stop();
         grpc_server.stop();
