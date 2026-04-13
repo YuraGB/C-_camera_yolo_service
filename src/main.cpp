@@ -3,6 +3,8 @@
 #include <chrono>
 #include <atomic>
 #include <csignal>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -24,7 +26,7 @@
 
 #include "inference_engine.h"
 #include "camera_manager.h"
-#include "grpc_server.h"
+#include "webrtc_service.h"
 
 std::atomic<bool> g_running{true};
 
@@ -90,11 +92,23 @@ std::filesystem::path resolveExistingPath(const std::string& raw_path) {
 
 void drainDetectionResults(
     InferenceEngine& inference_engine,
-    GRPCServer& grpc_server)
+    WebRTCService& webrtc_service)
 {
     while (auto result = inference_engine.getResult()) {
-        grpc_server.sendDetectionResult(result);
+        webrtc_service.sendDetectionResult(result);
     }
+}
+
+void detectionPublishLoop(
+    InferenceEngine& inference_engine,
+    WebRTCService& webrtc_service)
+{
+    while (g_running) {
+        drainDetectionResults(inference_engine, webrtc_service);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    drainDetectionResults(inference_engine, webrtc_service);
 }
 }
 
@@ -163,7 +177,19 @@ int main() {
         }
 
         CameraManager camera_manager(&inference_engine);
-        GRPCServer grpc_server("0.0.0.0:50051");
+        WebRTCServiceConfig webrtc_config;
+        webrtc_config.signaling_url =
+            std::getenv("CAMERA_SIGNALING_URL") ? std::getenv("CAMERA_SIGNALING_URL") : "ws://127.0.0.1:3001/ws";
+        webrtc_config.local_peer_id =
+            std::getenv("CAMERA_PEER_ID") ? std::getenv("CAMERA_PEER_ID") : "camera-cv-service";
+        webrtc_config.ice_servers = {"stun:stun.l.google.com:19302"};
+        webrtc_config.openh264_dll_path = resolveExistingPath("openh264-2.6.0-win64.dll").string();
+        if (const char* remote_peer_id = std::getenv("CAMERA_REMOTE_PEER_ID")) {
+            if (std::strlen(remote_peer_id) > 0) {
+                webrtc_config.remote_peer_id = std::string(remote_peer_id);
+            }
+        }
+        WebRTCService webrtc_service(std::move(webrtc_config));
 
         std::vector<std::string> camera_ids = detectConnectedCameras(camera_manager, 10);
 
@@ -184,39 +210,33 @@ int main() {
 
         camera_manager.startAllCameras();
         inference_engine.start();
-        grpc_server.start();
+        webrtc_service.start();
+        std::thread detection_thread(detectionPublishLoop, std::ref(inference_engine), std::ref(webrtc_service));
 
-        std::cout << "[INFO] Service started. Processing frames..." << std::endl;
-
-        int64_t global_frame_counter = 0;
+        std::cout << "[INFO] Service started. Processing frames with WebRTC transport..." << std::endl;
 
         while (g_running) {
             bool captured_any_frame = false;
 
             auto processFrames = [&](const std::vector<std::string>& ids) {
                 for (const auto& id : ids) {
-                    drainDetectionResults(inference_engine, grpc_server);
-
                     auto frame = camera_manager.getLatestFrame(id);
                     if (!frame) {
                         continue;
                     }
 
                     captured_any_frame = true;
-                    frame->camera_id = id;
-                    frame->frame_id = global_frame_counter++;
-                    frame->timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()
-                    ).count();
+                    if (frame->camera_id.empty()) {
+                        frame->camera_id = id;
+                    }
 
-                    grpc_server.sendLiveFrame(frame);
+                    webrtc_service.sendLiveFrame(frame);
                     inference_engine.processFrame(frame);
                 }
             };
 
             processFrames(camera_ids);
             processFrames(video_ids);
-            drainDetectionResults(inference_engine, grpc_server);
 
             if (!captured_any_frame) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -224,10 +244,12 @@ int main() {
         }
 
         std::cout << "[INFO] Stopping services..." << std::endl;
-        drainDetectionResults(inference_engine, grpc_server);
+        if (detection_thread.joinable()) {
+            detection_thread.join();
+        }
         camera_manager.stopAllCameras();
         inference_engine.stop();
-        grpc_server.stop();
+        webrtc_service.stop();
         std::cout << "[INFO] Service stopped." << std::endl;
         return 0;
     } catch (const std::exception& ex) {
