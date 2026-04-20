@@ -1,16 +1,28 @@
 #include "openh264_encoder.h"
 
+#include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <stdexcept>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
+
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
 
 #include "codec_api.h"
 
 namespace {
-constexpr int kTargetFps = 30;
 constexpr int kTargetBitrateBps = 2'500'000;
-constexpr int kKeyframeIntervalFrames = 60;
+constexpr double kMinTargetFps = 5.0;
+constexpr double kMaxTargetFps = 60.0;
 
 std::vector<uint8_t> collectBitstream(const SFrameBSInfo& info) {
   std::vector<uint8_t> output;
@@ -50,6 +62,20 @@ OpenH264Encoder::~OpenH264Encoder() {
 
 bool OpenH264Encoder::isReady() const {
   return create_encoder_ != nullptr && destroy_encoder_ != nullptr;
+}
+
+void OpenH264Encoder::setTargetFrameRate(double fps) {
+  if (!(fps > 0.0)) {
+    return;
+  }
+
+  const double clamped_fps = std::clamp(fps, kMinTargetFps, kMaxTargetFps);
+  if (std::abs(clamped_fps - fps_) < 1.0) {
+    return;
+  }
+
+  fps_ = clamped_fps;
+  reconfigure_pending_ = true;
 }
 
 std::vector<uint8_t> OpenH264Encoder::encode(const cv::Mat& bgr_frame, int64_t timestamp_ms, bool force_idr) {
@@ -117,6 +143,7 @@ void OpenH264Encoder::initializeEncoder(int width, int height) {
     throw std::runtime_error("WelsCreateSVCEncoder failed");
   }
 
+  const int keyframe_interval_frames = std::max(15, static_cast<int>(std::round(fps_ * 2.0)));
   SEncParamExt params{};
   if (encoder_->GetDefaultParams(&params) != 0) {
     throw std::runtime_error("OpenH264 GetDefaultParams failed");
@@ -132,7 +159,7 @@ void OpenH264Encoder::initializeEncoder(int width, int height) {
   params.iTemporalLayerNum = 1;
   params.iSpatialLayerNum = 1;
   params.bEnableFrameSkip = true;
-  params.uiIntraPeriod = kKeyframeIntervalFrames;
+  params.uiIntraPeriod = static_cast<unsigned int>(keyframe_interval_frames);
   params.sSpatialLayers[0].iVideoWidth = width;
   params.sSpatialLayers[0].iVideoHeight = height;
   params.sSpatialLayers[0].fFrameRate = static_cast<float>(fps_);
@@ -148,10 +175,11 @@ void OpenH264Encoder::initializeEncoder(int width, int height) {
 
   width_ = width;
   height_ = height;
+  reconfigure_pending_ = false;
 }
 
 void OpenH264Encoder::ensureInitialized(int width, int height) {
-  if (!encoder_ || width != width_ || height != height_) {
+  if (!encoder_ || width != width_ || height != height_ || reconfigure_pending_) {
     initializeEncoder(width, height);
   }
 }

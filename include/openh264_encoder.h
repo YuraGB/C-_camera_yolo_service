@@ -18,6 +18,7 @@ class OpenH264Encoder {
   OpenH264Encoder& operator=(const OpenH264Encoder&) = delete;
 
   bool isReady() const;
+  void setTargetFrameRate(double fps);
   std::vector<uint8_t> encode(const cv::Mat& bgr_frame, int64_t timestamp_ms, bool force_idr);
 
  private:
@@ -36,6 +37,7 @@ class OpenH264Encoder {
   ISVCEncoder* encoder_ = nullptr;
   int width_ = 0;
   int height_ = 0;
-  int fps_ = 30;
+  double fps_ = 30.0;
   int bitrate_bps_ = 2'500'000;
+  bool reconfigure_pending_ = false;
 };

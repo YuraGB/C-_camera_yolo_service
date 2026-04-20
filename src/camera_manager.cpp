@@ -4,6 +4,31 @@
 #include <thread>
 #include <opencv2/opencv.hpp>
 
+namespace {
+int64_t currentWallClockMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+bool isNumericSource(const std::string& source) {
+    if (source.empty()) {
+        return false;
+    }
+
+    size_t start = (source[0] == '-' || source[0] == '+') ? 1 : 0;
+    if (start >= source.size()) {
+        return false;
+    }
+
+    for (size_t i = start; i < source.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(source[i]))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+}  // namespace
 
 CameraManager::CameraManager(InferenceEngine* engine)
     : inferenceEngine_(engine) {}
@@ -69,9 +94,12 @@ void CameraManager::captureLoop(const std::string& camera_id) {
     }
 
     bool opened = false;
+    cam->is_file_source = !isNumericSource(cam->source);
+
     try {
         int index = std::stoi(cam->source);
         opened = cam->cap.open(index);
+        cam->is_file_source = false;
     } catch (...) {
         opened = cam->cap.open(cam->source);
         if (!opened) {
@@ -86,12 +114,81 @@ void CameraManager::captureLoop(const std::string& camera_id) {
         return;
     }
 
+    cam->source_fps = cam->cap.get(cv::CAP_PROP_FPS);
+    cam->first_source_timestamp_ms = -1;
+    cam->playback_start_wallclock_ms = 0;
+    cam->playback_start_time = std::chrono::steady_clock::now();
+
     int64_t frame_id = 0;
-    auto fps_delay = std::chrono::milliseconds(10);
+    auto frameTimestampForSource = [&]() {
+        const int64_t fallback_timestamp_ms = currentWallClockMs();
+        if (!cam->is_file_source) {
+            return fallback_timestamp_ms;
+        }
+
+        const double pos_msec = cam->cap.get(cv::CAP_PROP_POS_MSEC);
+        if (pos_msec < 0.0) {
+            return fallback_timestamp_ms;
+        }
+
+        const int64_t source_timestamp_ms = static_cast<int64_t>(pos_msec);
+        if (cam->first_source_timestamp_ms < 0) {
+            cam->first_source_timestamp_ms = source_timestamp_ms;
+            cam->playback_start_time = std::chrono::steady_clock::now();
+            cam->playback_start_wallclock_ms = fallback_timestamp_ms;
+        }
+
+        return cam->playback_start_wallclock_ms +
+               std::max<int64_t>(0, source_timestamp_ms - cam->first_source_timestamp_ms);
+    };
+    auto paceVideoFilePlayback = [&]() {
+        if (!cam->is_file_source || cam->first_source_timestamp_ms < 0) {
+            return;
+        }
+
+        const double pos_msec = cam->cap.get(cv::CAP_PROP_POS_MSEC);
+        if (pos_msec < 0.0) {
+            return;
+        }
+
+        const auto target_offset = std::chrono::milliseconds(
+            std::max<int64_t>(0, static_cast<int64_t>(pos_msec) - cam->first_source_timestamp_ms));
+        const auto target_time = cam->playback_start_time + target_offset;
+        const auto now = std::chrono::steady_clock::now();
+
+        if (target_time > now) {
+            std::this_thread::sleep_until(target_time);
+        }
+    };
+    auto catchUpVideoFilePlayback = [&]() {
+        if (!cam->is_file_source || cam->first_source_timestamp_ms < 0) {
+            return;
+        }
+
+        const double frame_interval_ms =
+            (cam->source_fps > 1.0) ? (1000.0 / cam->source_fps) : 33.333;
+        const double allowed_lag_ms = frame_interval_ms * 1.5;
+
+        while (cam->running) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - cam->playback_start_time).count();
+            const double target_source_ms =
+                static_cast<double>(cam->first_source_timestamp_ms + std::max<int64_t>(0, elapsed_ms));
+            const double current_source_ms = cam->cap.get(cv::CAP_PROP_POS_MSEC);
+
+            if (current_source_ms < 0.0 || current_source_ms + allowed_lag_ms >= target_source_ms) {
+                break;
+            }
+
+            if (!cam->cap.grab()) {
+                break;
+            }
+
+            ++frame_id;
+        }
+    };
 
     while (cam->running) {
-        auto start_time = std::chrono::high_resolution_clock::now();
-
         cv::Mat mat;
         if (!cam->cap.read(mat) || mat.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -101,17 +198,12 @@ void CameraManager::captureLoop(const std::string& camera_id) {
         auto frame = std::make_shared<Frame>();
         frame->camera_id = camera_id;
         frame->frame_id = frame_id++;
-        frame->timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()
-        ).count();
+        frame->timestamp = frameTimestampForSource();
         frame->mat = std::move(mat);
 
         enqueueFrame(frame, *cam);
-
-        auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
-        auto sleep_time = fps_delay - std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-        if (sleep_time.count() > 0)
-            std::this_thread::sleep_for(sleep_time);
+        paceVideoFilePlayback();
+        catchUpVideoFilePlayback();
     }
 
     cam->cap.release();
@@ -119,7 +211,7 @@ void CameraManager::captureLoop(const std::string& camera_id) {
 
 void CameraManager::enqueueFrame(std::shared_ptr<Frame> frame, CameraInfo& cam) {
     std::lock_guard<std::mutex> lock(cam.queue_mutex);
-    const size_t MAX_QUEUE = 10;
+    const size_t MAX_QUEUE = 1;
     if (cam.frame_queue.size() >= MAX_QUEUE)
         cam.frame_queue.pop_front();
     cam.frame_queue.push_back(frame);

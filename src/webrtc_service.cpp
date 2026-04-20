@@ -49,6 +49,65 @@ uint32_t randomSsrc() {
   static std::uniform_int_distribution<uint32_t> distribution;
   return distribution(generator);
 }
+
+double estimateLiveFps(double current_fps, int64_t previous_timestamp_ms, int64_t current_timestamp_ms) {
+  if (previous_timestamp_ms <= 0 || current_timestamp_ms <= previous_timestamp_ms) {
+    return current_fps;
+  }
+
+  const double delta_ms = static_cast<double>(current_timestamp_ms - previous_timestamp_ms);
+  if (delta_ms < 1.0) {
+    return current_fps;
+  }
+
+  const double instant_fps = std::clamp(1000.0 / delta_ms, 1.0, 60.0);
+  if (current_fps <= 0.0) {
+    return instant_fps;
+  }
+
+  constexpr double kAlpha = 0.2;
+  return (current_fps * (1.0 - kAlpha)) + (instant_fps * kAlpha);
+}
+
+bool shouldForceKeyframe(int64_t encoded_frame_count, double live_fps) {
+  const int64_t keyframe_interval_frames =
+      std::max<int64_t>(15, static_cast<int64_t>(std::llround(std::max(10.0, live_fps) * 2.0)));
+  return keyframe_interval_frames > 0 && (encoded_frame_count % keyframe_interval_frames) == 0;
+}
+
+cv::Mat prepareLiveFrameForEncoding(
+    const cv::Mat& input,
+    int max_width,
+    int max_height) {
+  if (input.empty() || max_width <= 0 || max_height <= 0) {
+    return input;
+  }
+
+  if (input.cols <= max_width && input.rows <= max_height) {
+    return input;
+  }
+
+  const double scale_x = static_cast<double>(max_width) / static_cast<double>(input.cols);
+  const double scale_y = static_cast<double>(max_height) / static_cast<double>(input.rows);
+  const double scale = std::min(scale_x, scale_y);
+
+  if (scale >= 1.0) {
+    return input;
+  }
+
+  int target_width = std::max(2, static_cast<int>(std::round(input.cols * scale)));
+  int target_height = std::max(2, static_cast<int>(std::round(input.rows * scale)));
+  if ((target_width % 2) != 0) {
+    --target_width;
+  }
+  if ((target_height % 2) != 0) {
+    --target_height;
+  }
+
+  cv::Mat resized;
+  cv::resize(input, resized, cv::Size(target_width, target_height), 0.0, 0.0, cv::INTER_AREA);
+  return resized;
+}
 }  // namespace
 
 WebRTCService::WebRTCService(WebRTCServiceConfig config) : config_(std::move(config)) {}
@@ -159,6 +218,13 @@ void WebRTCService::stop() {
   }
 
   video_encoder_.reset();
+  {
+    std::lock_guard<std::mutex> lock(live_timeline_mutex_);
+    first_live_timestamp_ms_ = -1;
+    dropped_stale_live_frames_ = 0;
+    last_encoded_frame_timestamp_ms_ = -1;
+    smoothed_live_fps_ = 0.0;
+  }
 
   std::cout << "[WebRTC] Service stopped" << std::endl;
 }
@@ -216,6 +282,9 @@ void WebRTCService::handleSignalingMessage(const std::string& message) {
   }
 
   if (type == "offer-request" || type == "viewer-join" || type == "connect") {
+      std::cout << "[WebRTC] Trigger createOfferForPeer, type: " << type
+            << ", peer_id: " << *peer_id << std::endl;
+            
     createOfferForPeer(*peer_id);
     return;
   }
@@ -505,13 +574,44 @@ void WebRTCService::encodeAndBroadcastVideo(const std::shared_ptr<Frame>& frame)
     return;
   }
 
-  const bool force_idr = (encoded_frame_count_ % 60) == 0;
-  auto bitstream = video_encoder_->encode(frame->mat, frame->timestamp, force_idr);
+  const int64_t now_ms = currentTimestampMs();
+  const int64_t live_lag_ms = (frame->timestamp > 0) ? std::max<int64_t>(0, now_ms - frame->timestamp) : 0;
+  if (config_.max_live_latency_ms > 0 && live_lag_ms > config_.max_live_latency_ms) {
+    ++dropped_stale_live_frames_;
+    if ((dropped_stale_live_frames_ % 30) == 1) {
+      std::cout << "[WebRTC] Dropping stale live frame, lag=" << live_lag_ms
+                << "ms threshold=" << config_.max_live_latency_ms << "ms" << std::endl;
+    }
+    return;
+  }
+
+  smoothed_live_fps_ =
+      estimateLiveFps(smoothed_live_fps_, last_encoded_frame_timestamp_ms_, frame->timestamp);
+  if (smoothed_live_fps_ > 0.0) {
+    video_encoder_->setTargetFrameRate(smoothed_live_fps_);
+  }
+
+  cv::Mat live_mat = prepareLiveFrameForEncoding(
+      frame->mat,
+      config_.max_live_width,
+      config_.max_live_height);
+
+  const bool force_idr = shouldForceKeyframe(encoded_frame_count_, smoothed_live_fps_);
+  auto bitstream = video_encoder_->encode(live_mat, frame->timestamp, force_idr);
   if (bitstream.empty()) {
     return;
   }
 
-  const double seconds = toRelativeSeconds(service_start_timestamp_ms_, frame->timestamp);
+  int64_t first_live_timestamp_ms = 0;
+  {
+    std::lock_guard<std::mutex> lock(live_timeline_mutex_);
+    if (first_live_timestamp_ms_ < 0) {
+      first_live_timestamp_ms_ = frame->timestamp;
+    }
+    first_live_timestamp_ms = first_live_timestamp_ms_;
+  }
+
+  const double seconds = toRelativeSeconds(first_live_timestamp_ms, frame->timestamp);
   rtc::FrameInfo info{std::chrono::duration<double>(seconds)};
 
   std::vector<std::shared_ptr<PeerSession>> sessions;
@@ -532,6 +632,7 @@ void WebRTCService::encodeAndBroadcastVideo(const std::shared_ptr<Frame>& frame)
         info);
   }
 
+  last_encoded_frame_timestamp_ms_ = frame->timestamp;
   ++encoded_frame_count_;
 }
 
