@@ -31,6 +31,17 @@
 std::atomic<bool> g_running{true};
 
 namespace {
+int readEnvInt(const char* name, int fallback) {
+    if (const char* raw = std::getenv(name)) {
+        try {
+            return std::stoi(raw);
+        } catch (...) {
+        }
+    }
+
+    return fallback;
+}
+
 std::filesystem::path getExecutableDir() {
 #ifdef _WIN32
     std::wstring buffer(MAX_PATH, L'\0');
@@ -183,6 +194,9 @@ int main() {
         webrtc_config.local_peer_id =
             std::getenv("CAMERA_PEER_ID") ? std::getenv("CAMERA_PEER_ID") : "camera-cv-service";
         webrtc_config.ice_servers = {"stun:stun.l.google.com:19302"};
+        webrtc_config.max_live_latency_ms = readEnvInt("CAMERA_MAX_LIVE_LATENCY_MS", 150);
+        webrtc_config.max_live_width = readEnvInt("CAMERA_MAX_LIVE_WIDTH", 1280);
+        webrtc_config.max_live_height = readEnvInt("CAMERA_MAX_LIVE_HEIGHT", 720);
         webrtc_config.openh264_dll_path = resolveExistingPath("openh264-2.6.0-win64.dll").string();
         if (const char* remote_peer_id = std::getenv("CAMERA_REMOTE_PEER_ID")) {
             if (std::strlen(remote_peer_id) > 0) {

@@ -26,6 +26,9 @@ struct WebRTCServiceConfig {
   std::string live_track_label = "liveStream";
   std::string detection_channel_label = "detectionStream";
   size_t max_detection_buffered_bytes = 128 * 1024;
+  int max_live_latency_ms = 150;
+  int max_live_width = 1280;
+  int max_live_height = 720;
   std::string openh264_dll_path = "third_party/openh264-2.6.0-win64.dll";
 };
 
@@ -80,6 +83,11 @@ class WebRTCService {
   std::condition_variable live_frame_cv_;
   std::shared_ptr<Frame> latest_live_frame_;
   std::thread video_thread_;
+  std::mutex live_timeline_mutex_;
+  int64_t first_live_timestamp_ms_ = -1;
+  int64_t dropped_stale_live_frames_ = 0;
+  int64_t last_encoded_frame_timestamp_ms_ = -1;
+  double smoothed_live_fps_ = 0.0;
 
   std::mutex signaling_mutex_;
   std::vector<std::string> pending_signaling_messages_;
