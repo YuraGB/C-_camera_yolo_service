@@ -30,6 +30,14 @@ The current transport stack uses:
 
 This keeps the live stream as close to real time as possible while letting detections arrive independently.
 
+## End-to-End Live Path
+
+For live WebRTC playback, the frame path is:
+
+- `file -> OpenCV -> raw frame -> re-encode -> RTP/WebRTC -> browser jitter buffer -> decoder -> screen`
+
+This is important because the service is not acting like a simple local media player. It rebuilds the video into a real-time WebRTC stream, which adds unavoidable processing, packetization, buffering, and decode stages.
+
 ## Live Stream
 
 Live video is sent as a native WebRTC video track labeled `liveStream`.
