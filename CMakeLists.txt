@@ -16,13 +16,24 @@ set(OPENH264_RUNTIME_DLL "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openh264-2.6.0
 find_package(OpenCV REQUIRED)
 find_package(Threads REQUIRED)
 find_package(LibDataChannel CONFIG REQUIRED)
+find_package(Eigen3 CONFIG REQUIRED)
 
 add_executable(camera_cv_service
     src/main.cpp
     src/camera_manager.cpp
     src/inference_engine.cpp
     src/openh264_encoder.cpp
+    src/tracking_manager.cpp
     src/webrtc_service.cpp
+    src/webrtc_service_signaling.cpp
+    src/webrtc_service_peer.cpp
+    src/webrtc_service_media.cpp
+    third_party/ByteTrack-cpp/src/BYTETracker.cpp
+    third_party/ByteTrack-cpp/src/KalmanFilter.cpp
+    third_party/ByteTrack-cpp/src/Object.cpp
+    third_party/ByteTrack-cpp/src/Rect.cpp
+    third_party/ByteTrack-cpp/src/STrack.cpp
+    third_party/ByteTrack-cpp/src/lapjv.cpp
 )
 
 target_include_directories(camera_cv_service PRIVATE
@@ -30,6 +41,7 @@ target_include_directories(camera_cv_service PRIVATE
     include/models
     ${ONNXRUNTIME_INCLUDE_DIR}
     ${OPENH264_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ByteTrack-cpp/include
     ${OpenCV_INCLUDE_DIRS}/opencv4
     E:/tools/vcpkg/installed/x64-windows/include
 )
@@ -38,6 +50,7 @@ target_link_libraries(camera_cv_service PRIVATE
     ${OpenCV_LIBS}
     Threads::Threads
     LibDataChannel::LibDataChannel
+    Eigen3::Eigen
     ${ONNXRUNTIME_LIBRARY}
     Version
 )
