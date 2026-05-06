@@ -28,10 +28,14 @@ public:
 
 private:
     void inferenceLoop();
-    void processFrameImpl(std::shared_ptr<Frame> frame);
-    void parseYOLO(std::shared_ptr<Frame> frame, const std::vector<int64_t>& output_shape);
+    std::shared_ptr<Frame> processFrameImpl(const std::shared_ptr<Frame>& frame);
+    void prepareInputTensor(const cv::Mat& frame);
+    std::vector<Detection> parseYOLO(
+        const float* data,
+        const std::vector<int64_t>& output_shape,
+        int frame_width,
+        int frame_height);
     void configureExecutionProvider();
-    void parseDetectionsFromYOLO();
 
     std::string model_path_;
     std::string selected_execution_provider_ = "CPUExecutionProvider";
@@ -51,4 +55,13 @@ private:
     std::condition_variable queue_cv_;
     std::queue<std::shared_ptr<Frame>> input_queue_;
     std::queue<std::shared_ptr<Frame>> output_queue_;
+
+    int input_width_ = 640;
+    int input_height_ = 640;
+    float confidence_threshold_ = 0.25f;
+    float iou_threshold_ = 0.45f;
+    bool verbose_logging_ = false;
+    Ort::MemoryInfo memory_info_;
+    std::vector<float> input_tensor_values_;
+    std::vector<int64_t> input_shape_;
 };

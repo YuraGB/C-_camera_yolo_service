@@ -9,11 +9,14 @@
 #include <string>
 #include <filesystem>
 #include <stdexcept>
+#include <algorithm>
 
 #include <opencv2/opencv.hpp>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -38,6 +41,16 @@ int readEnvInt(const char* name, int fallback) {
             return std::stoi(raw);
         } catch (...) {
         }
+    }
+
+    return fallback;
+}
+
+bool readEnvBool(const char* name, bool fallback) {
+    if (const char* raw = std::getenv(name)) {
+        const std::string value(raw);
+        return value == "1" || value == "true" || value == "TRUE" ||
+               value == "yes" || value == "YES";
     }
 
     return fallback;
@@ -174,12 +187,11 @@ int main() {
     std::cout << "[INFO] Starting Camera CV Service..." << std::endl;
     std::signal(SIGINT, signalHandler);
 
-    const auto model_path = resolveExistingPath("models/yolov8x.onnx");
-    // const auto model_path = resolveExistingPath("models/yolo26l.onnx");
-    const auto test_video_path = resolveExistingPath("test_video.mp4");
-    // const auto test_video_path = std::getenv("CAMERA_TEST_VIDEO_PATH")
-    //     ? resolveExistingPath(std::getenv("CAMERA_TEST_VIDEO_PATH"))
-    //     : std::filesystem::path{};
+    const auto model_path = resolveExistingPath(
+        std::getenv("CAMERA_MODEL_PATH") ? std::getenv("CAMERA_MODEL_PATH") : "models/yolov8x.onnx");
+    const auto test_video_path = std::getenv("CAMERA_TEST_VIDEO_PATH")
+        ? resolveExistingPath(std::getenv("CAMERA_TEST_VIDEO_PATH"))
+        : resolveExistingPath("test_video.mp4");
 
     std::cout << "[INFO] Model path: " << model_path.string() << std::endl;
     if (!test_video_path.empty()) {
@@ -211,6 +223,11 @@ int main() {
         webrtc_config.max_live_latency_ms = readEnvInt("CAMERA_MAX_LIVE_LATENCY_MS", 150);
         webrtc_config.max_live_width = readEnvInt("CAMERA_MAX_LIVE_WIDTH", 1280);
         webrtc_config.max_live_height = readEnvInt("CAMERA_MAX_LIVE_HEIGHT", 720);
+        webrtc_config.video_latency_sample_interval_ms =
+            readEnvInt("CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS", 1000);
+        webrtc_config.max_detection_buffered_bytes =
+            static_cast<size_t>(readEnvInt("CAMERA_MAX_DETECTION_BUFFERED_BYTES", 128 * 1024));
+        webrtc_config.verbose_logging = readEnvBool("CAMERA_VERBOSE_LOGS", false);
         webrtc_config.openh264_dll_path = resolveExistingPath("openh264-2.6.0-win64.dll").string();
         if (const char* remote_peer_id = std::getenv("CAMERA_REMOTE_PEER_ID")) {
             if (std::strlen(remote_peer_id) > 0) {
@@ -219,7 +236,8 @@ int main() {
         }
         WebRTCService webrtc_service(std::move(webrtc_config));
 
-        std::vector<std::string> camera_ids = detectConnectedCameras(camera_manager, 10);
+        const int max_camera_scan = std::clamp(readEnvInt("CAMERA_MAX_CAMERA_SCAN", 10), 0, 64);
+        std::vector<std::string> camera_ids = detectConnectedCameras(camera_manager, max_camera_scan);
 
         std::vector<std::string> video_files;
         if (!test_video_path.empty() && std::filesystem::is_regular_file(test_video_path)) {

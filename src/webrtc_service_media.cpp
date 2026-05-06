@@ -38,7 +38,7 @@ void WebRTCService::sendDetectionResult(const std::shared_ptr<Frame>& frame) {
 
   static std::atomic<int64_t> detection_log_counter{0};
   const auto log_index = ++detection_log_counter;
-  if ((log_index % 30) == 1) {
+  if (config_.verbose_logging && (log_index % 30) == 1) {
     std::cout << "[WebRTC] Queueing detection_frame for camera_id="
               << frame->camera_id << ", detections=" << frame->detections.size()
               << ", timestamp=" << frame->timestamp << std::endl;
@@ -71,6 +71,22 @@ std::string WebRTCService::buildDetectionMessage(const Frame& frame) const {
   return payload.dump();
 }
 
+std::string WebRTCService::buildVideoLatencySampleMessage(
+    const SourceStreamState& source_state,
+    const Frame& frame,
+    int64_t encoded_timestamp_ms) const {
+  nlohmann::json payload = {
+      {"type", "video_latency_sample"},
+      {"camera_id", frame.camera_id.empty() ? source_state.camera_id : frame.camera_id},
+      {"frame_id", frame.frame_id},
+      {"capture_timestamp_ms", frame.timestamp},
+      {"encoded_timestamp_ms", encoded_timestamp_ms},
+      {"sample_interval_ms", config_.video_latency_sample_interval_ms},
+  };
+
+  return payload.dump();
+}
+
 void WebRTCService::broadcastDetectionMessage(const std::string& message) {
   std::vector<std::shared_ptr<PeerSession>> sessions;
   {
@@ -97,10 +113,39 @@ void WebRTCService::broadcastDetectionMessage(const std::string& message) {
       continue;
     }
 
-    std::cout << "[WebRTC] Sending detection_frame to peer " << session->peer_id
-              << std::endl;
+    if (config_.verbose_logging) {
+      std::cout << "[WebRTC] Sending detection_frame to peer " << session->peer_id
+                << std::endl;
+    }
     session->detection_channel->send(message);
   }
+}
+
+void WebRTCService::maybeSendVideoLatencySample(
+    const std::shared_ptr<SourceStreamState>& source_state,
+    const std::shared_ptr<Frame>& frame,
+    int64_t encoded_timestamp_ms) {
+  if (!source_state || !frame || config_.video_latency_sample_interval_ms <= 0) {
+    return;
+  }
+
+  bool should_send = false;
+  {
+    std::lock_guard<std::mutex> lock(source_state->timeline_mutex);
+    if (source_state->last_latency_sample_sent_ms < 0 ||
+        encoded_timestamp_ms - source_state->last_latency_sample_sent_ms >=
+            config_.video_latency_sample_interval_ms) {
+      source_state->last_latency_sample_sent_ms = encoded_timestamp_ms;
+      should_send = true;
+    }
+  }
+
+  if (!should_send) {
+    return;
+  }
+
+  broadcastDetectionMessage(
+      buildVideoLatencySampleMessage(*source_state, *frame, encoded_timestamp_ms));
 }
 
 void WebRTCService::sourceLoop(
@@ -202,6 +247,7 @@ void WebRTCService::encodeAndBroadcastVideo(
                      bitstream.size(), info);
   }
 
+  maybeSendVideoLatencySample(source_state, frame, currentTimestampMs());
   source_state->last_encoded_frame_timestamp_ms = frame->timestamp;
   ++source_state->encoded_frame_count;
 }
@@ -241,6 +287,7 @@ void WebRTCService::stopSourceWorker(
     source_state->first_live_timestamp_ms = -1;
     source_state->dropped_stale_live_frames = 0;
     source_state->last_encoded_frame_timestamp_ms = -1;
+    source_state->last_latency_sample_sent_ms = -1;
     source_state->smoothed_live_fps = 0.0;
     source_state->encoded_frame_count = 0;
   }

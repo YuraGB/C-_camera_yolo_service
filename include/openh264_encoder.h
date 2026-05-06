@@ -28,7 +28,7 @@ class OpenH264Encoder {
   void loadLibrary();
   void initializeEncoder(int width, int height);
   void ensureInitialized(int width, int height);
-  static cv::Mat convertToI420(const cv::Mat& bgr_frame);
+  const cv::Mat& convertToI420(const cv::Mat& bgr_frame);
 
   std::string dll_path_;
   void* dll_handle_ = nullptr;
@@ -40,4 +40,5 @@ class OpenH264Encoder {
   double fps_ = 30.0;
   int bitrate_bps_ = 2'500'000;
   bool reconfigure_pending_ = false;
+  cv::Mat i420_buffer_;
 };

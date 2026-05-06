@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 
 #ifndef NOMINMAX
@@ -24,6 +25,16 @@ constexpr int kTargetBitrateBps = 2'500'000;
 constexpr double kMinTargetFps = 5.0;
 constexpr double kMaxTargetFps = 60.0;
 
+int readEnvInt(const char* name, int fallback) {
+  if (const char* raw = std::getenv(name)) {
+    try {
+      return std::max(1, std::stoi(raw));
+    } catch (...) {
+    }
+  }
+  return fallback;
+}
+
 std::vector<uint8_t> collectBitstream(const SFrameBSInfo& info) {
   std::vector<uint8_t> output;
   output.reserve(static_cast<size_t>(info.iFrameSizeInBytes));
@@ -43,7 +54,9 @@ std::vector<uint8_t> collectBitstream(const SFrameBSInfo& info) {
 }
 }  // namespace
 
-OpenH264Encoder::OpenH264Encoder(const std::string& dll_path) : dll_path_(dll_path) {
+OpenH264Encoder::OpenH264Encoder(const std::string& dll_path)
+    : dll_path_(dll_path),
+      bitrate_bps_(readEnvInt("CAMERA_H264_BITRATE_BPS", kTargetBitrateBps)) {
   loadLibrary();
 }
 
@@ -92,7 +105,7 @@ std::vector<uint8_t> OpenH264Encoder::encode(const cv::Mat& bgr_frame, int64_t t
     encoder_->ForceIntraFrame(true);
   }
 
-  cv::Mat i420 = convertToI420(bgr_frame);
+  const cv::Mat& i420 = convertToI420(bgr_frame);
 
   SSourcePicture picture{};
   picture.iColorFormat = videoFormatI420;
@@ -184,8 +197,7 @@ void OpenH264Encoder::ensureInitialized(int width, int height) {
   }
 }
 
-cv::Mat OpenH264Encoder::convertToI420(const cv::Mat& bgr_frame) {
-  cv::Mat yuv_i420;
-  cv::cvtColor(bgr_frame, yuv_i420, cv::COLOR_BGR2YUV_I420);
-  return yuv_i420;
+const cv::Mat& OpenH264Encoder::convertToI420(const cv::Mat& bgr_frame) {
+  cv::cvtColor(bgr_frame, i420_buffer_, cv::COLOR_BGR2YUV_I420);
+  return i420_buffer_;
 }

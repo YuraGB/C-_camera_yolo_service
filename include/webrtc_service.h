@@ -30,7 +30,9 @@ struct WebRTCServiceConfig {
   int max_live_latency_ms = 150;
   int max_live_width = 1280;
   int max_live_height = 720;
+  int video_latency_sample_interval_ms = 1000;
   std::string openh264_dll_path = "third_party/openh264-2.6.0-win64.dll";
+  bool verbose_logging = false;
 };
 
 class WebRTCService {
@@ -65,6 +67,7 @@ class WebRTCService {
     int64_t first_live_timestamp_ms = -1;
     int64_t dropped_stale_live_frames = 0;
     int64_t last_encoded_frame_timestamp_ms = -1;
+    int64_t last_latency_sample_sent_ms = -1;
     double smoothed_live_fps = 0.0;
     int64_t encoded_frame_count = 0;
   };
@@ -86,7 +89,15 @@ class WebRTCService {
   void cleanupFrontendSessionsExcept(const std::string& active_peer_id);
 
   std::string buildDetectionMessage(const Frame& frame) const;
+  std::string buildVideoLatencySampleMessage(
+      const SourceStreamState& source_state,
+      const Frame& frame,
+      int64_t encoded_timestamp_ms) const;
   void broadcastDetectionMessage(const std::string& message);
+  void maybeSendVideoLatencySample(
+      const std::shared_ptr<SourceStreamState>& source_state,
+      const std::shared_ptr<Frame>& frame,
+      int64_t encoded_timestamp_ms);
   void sendTrackMap(const std::shared_ptr<PeerSession>& session);
 
   void sourceLoop(const std::shared_ptr<SourceStreamState>& source_state);
