@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <opencv2/opencv.hpp>
@@ -23,10 +24,6 @@
 #if __has_include(<onnxruntime/core/providers/cuda/cuda_provider_factory.h>)
 #include <onnxruntime/core/providers/cuda/cuda_provider_factory.h>
 #define HAS_ORT_CUDA_PROVIDER 1
-#endif
-#if __has_include(<onnxruntime/core/providers/dml/dml_provider_factory.h>)
-#include <onnxruntime/core/providers/dml/dml_provider_factory.h>
-#define HAS_ORT_DML_PROVIDER 1
 #endif
 #endif
 
@@ -52,6 +49,34 @@ std::string classIdToLabel(int class_id) {
 
 bool hasProvider(const std::vector<std::string>& providers, const char* provider_name) {
     return std::find(providers.begin(), providers.end(), provider_name) != providers.end();
+}
+
+int readEnvInt(const char* name, int fallback) {
+    if (const char* raw = std::getenv(name)) {
+        try {
+            return std::max(1, std::stoi(raw));
+        } catch (...) {
+        }
+    }
+    return fallback;
+}
+
+float readEnvFloat(const char* name, float fallback) {
+    if (const char* raw = std::getenv(name)) {
+        try {
+            return std::stof(raw);
+        } catch (...) {
+        }
+    }
+    return fallback;
+}
+
+bool readEnvBool(const char* name, bool fallback) {
+    if (const char* raw = std::getenv(name)) {
+        const std::string value(raw);
+        return value == "1" || value == "true" || value == "TRUE" || value == "yes" || value == "YES";
+    }
+    return fallback;
 }
 
 #ifdef _WIN32
@@ -123,7 +148,6 @@ using AppendExecutionProviderDeviceFn = OrtStatus*(ORT_API_CALL*)(OrtSessionOpti
 
 bool appendProviderBySymbol(HMODULE ort_module,
                             const char* symbol_name,
-                            const char* provider_label,
                             OrtSessionOptions* session_options,
                             int device_id,
                             std::string& error_message) {
@@ -180,8 +204,17 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
     : model_path_(model_path),
       env_(ORT_LOGGING_LEVEL_WARNING, "InferenceEngine"),
       session_options_(),
+      memory_info_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)),
       running_(false)
 {
+    input_width_ = readEnvInt("CAMERA_INFERENCE_WIDTH", 640);
+    input_height_ = readEnvInt("CAMERA_INFERENCE_HEIGHT", 640);
+    confidence_threshold_ = std::clamp(readEnvFloat("CAMERA_CONF_THRESHOLD", 0.25f), 0.0f, 1.0f);
+    iou_threshold_ = std::clamp(readEnvFloat("CAMERA_IOU_THRESHOLD", 0.45f), 0.0f, 1.0f);
+    verbose_logging_ = readEnvBool("CAMERA_VERBOSE_LOGS", false);
+    input_shape_ = {1, 3, input_height_, input_width_};
+    input_tensor_values_.resize(static_cast<size_t>(3 * input_height_ * input_width_));
+
     const auto cpu_threads = std::max(1u, std::thread::hardware_concurrency());
     auto configureBaseOptions = [cpu_threads](Ort::SessionOptions& options) {
         options.SetIntraOpNumThreads(static_cast<int>(cpu_threads));
@@ -290,11 +323,6 @@ void InferenceEngine::configureExecutionProvider() {
     std::cout << "[ONNX] CUDA provider factory header was not available at compile time; "
                  "using runtime symbol lookup fallback if possible." << std::endl;
 #endif
-#if !defined(HAS_ORT_DML_PROVIDER)
-    std::cout << "[ONNX] DML provider factory header was not available at compile time; "
-                 "using runtime symbol lookup fallback if possible." << std::endl;
-#endif
-
 #ifdef _WIN32
     HMODULE ort_module = GetModuleHandleW(L"onnxruntime.dll");
     if (!ort_module) {
@@ -329,7 +357,6 @@ void InferenceEngine::configureExecutionProvider() {
         if (appendProviderBySymbol(
                 ort_module,
                 "OrtSessionOptionsAppendExecutionProvider_CUDA",
-                "CUDAExecutionProvider",
                 session_options_,
                 0,
                 error_message)) {
@@ -343,48 +370,9 @@ void InferenceEngine::configureExecutionProvider() {
     }
 #endif
 
-#if defined(HAS_ORT_DML_PROVIDER)
-    if (!gpu_enabled && hasProvider(providers, "DmlExecutionProvider")) {
-        try {
-            std::cout << "[ONNX] Attempting to enable DmlExecutionProvider" << std::endl;
-            session_options_.AppendExecutionProvider_DML(0);
-            selected_execution_provider_ = "DmlExecutionProvider";
-            std::cout << "[ONNX] DmlExecutionProvider enabled" << std::endl;
-            gpu_enabled = true;
-        } catch (const Ort::Exception& e) {
-            std::cerr << "[ONNX] Failed to enable DmlExecutionProvider: "
-                      << e.what() << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "[ONNX] Failed to enable DmlExecutionProvider: "
-                      << e.what() << std::endl;
-        }
-    }
-#endif
-
-#ifdef _WIN32
-    if (!gpu_enabled && hasProvider(providers, "DmlExecutionProvider")) {
-        std::string error_message;
-        std::cout << "[ONNX] Attempting to enable DmlExecutionProvider via runtime symbol lookup" << std::endl;
-        if (appendProviderBySymbol(
-                ort_module,
-                "OrtSessionOptionsAppendExecutionProvider_DML",
-                "DmlExecutionProvider",
-                session_options_,
-                0,
-                error_message)) {
-            selected_execution_provider_ = "DmlExecutionProvider";
-            std::cout << "[ONNX] DmlExecutionProvider enabled via runtime symbol lookup" << std::endl;
-            gpu_enabled = true;
-        } else {
-            std::cerr << "[ONNX] Failed to enable DmlExecutionProvider via runtime symbol lookup: "
-                      << error_message << std::endl;
-        }
-    }
-#endif
-
     if (!gpu_enabled) {
         selected_execution_provider_ = "CPUExecutionProvider";
-        std::cout << "[ONNX] GPU execution provider not available, using CPUExecutionProvider" << std::endl;
+        std::cout << "[ONNX] CUDAExecutionProvider not available, using CPUExecutionProvider fallback" << std::endl;
     }
 
     std::cout << "[ONNX] Selected execution provider preference: "
@@ -460,38 +448,33 @@ void InferenceEngine::inferenceLoop() {
             input_queue_.pop();
         }
 
-        processFrameImpl(frame);
+        auto result_frame = processFrameImpl(frame);
+        if (!result_frame) {
+            continue;
+        }
 
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
-            output_queue_.push(frame);
+            while (!output_queue_.empty()) {
+                output_queue_.pop();
+            }
+            output_queue_.push(std::move(result_frame));
         }
     }
 }
 
-void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
-    if (!frame || frame->mat.empty() || !session_) return;
+std::shared_ptr<Frame> InferenceEngine::processFrameImpl(const std::shared_ptr<Frame>& frame) {
+    if (!frame || frame->mat.empty() || !session_) return nullptr;
 
-    frame->detections.clear();
-
-    cv::Mat infer_mat;
-    cv::resize(frame->mat, infer_mat, cv::Size(640, 640));
-    infer_mat.convertTo(infer_mat, CV_32F, 1.0 / 255.0);
-    cv::cvtColor(infer_mat, infer_mat, cv::COLOR_BGR2RGB);
-
-    Frame tmp_frame("", 0, 0, infer_mat);
-    std::vector<float> input_tensor_values = tmp_frame.getDataCHW();
-    std::vector<int64_t> input_shape = {1, infer_mat.channels(), infer_mat.rows, infer_mat.cols};
+    prepareInputTensor(frame->mat);
 
     try {
-        Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
         Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-            memory_info,
-            input_tensor_values.data(),
-            input_tensor_values.size(),
-            input_shape.data(),
-            input_shape.size());
+            memory_info_,
+            input_tensor_values_.data(),
+            input_tensor_values_.size(),
+            input_shape_.data(),
+            input_shape_.size());
 
         auto output_tensors = session_->Run(
             Ort::RunOptions{nullptr},
@@ -507,19 +490,46 @@ void InferenceEngine::processFrameImpl(std::shared_ptr<Frame> frame) {
             const auto tensor_info = tensor.GetTensorTypeAndShapeInfo();
             const auto output_shape = tensor_info.GetShape();
 
-            frame->inference_result.assign(output_data, output_data + tensor_info.GetElementCount());
-            parseYOLO(frame, output_shape);
+            auto result_frame = std::make_shared<Frame>();
+            result_frame->camera_id = frame->camera_id;
+            result_frame->frame_id = frame->frame_id;
+            result_frame->timestamp = frame->timestamp;
+            result_frame->detections = parseYOLO(output_data, output_shape, frame->mat.cols, frame->mat.rows);
+            return result_frame;
         }
 
     } catch (const Ort::Exception& e) {
         std::cerr << "ONNX Runtime inference error: " << e.what() << std::endl;
     }
+
+    return nullptr;
 }
 
-void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<int64_t>& output_shape) {
-    const float conf_threshold = 0.25f;
-    const float iou_threshold = 0.45f;
-    frame->detections.clear();
+void InferenceEngine::prepareInputTensor(const cv::Mat& frame) {
+    cv::Mat resized;
+    cv::resize(frame, resized, cv::Size(input_width_, input_height_), 0.0, 0.0, cv::INTER_LINEAR);
+
+    cv::Mat rgb;
+    cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
+
+    std::vector<cv::Mat> channels(3);
+    cv::split(rgb, channels);
+
+    const size_t plane_size = static_cast<size_t>(input_width_ * input_height_);
+    for (int channel = 0; channel < 3; ++channel) {
+        channels[channel].convertTo(
+            cv::Mat(input_height_, input_width_, CV_32F, input_tensor_values_.data() + (plane_size * channel)),
+            CV_32F,
+            1.0 / 255.0);
+    }
+}
+
+std::vector<Detection> InferenceEngine::parseYOLO(
+    const float* data,
+    const std::vector<int64_t>& output_shape,
+    int frame_width,
+    int frame_height) {
+    std::vector<Detection> detections;
 
     if (output_shape.size() != 3 || output_shape[1] < 5 || output_shape[2] <= 0) {
         std::cerr << "[YOLO] Unexpected output shape:";
@@ -527,20 +537,22 @@ void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<
             std::cerr << " " << dim;
         }
         std::cerr << std::endl;
-        return;
+        return detections;
     }
 
     const int64_t num_features = output_shape[1];
     const int64_t num_predictions = output_shape[2];
     const int num_classes = static_cast<int>(num_features - 4);
-    const float* data = frame->inference_result.data();
 
-    const float scale_x = static_cast<float>(frame->mat.cols) / 640.0f;
-    const float scale_y = static_cast<float>(frame->mat.rows) / 640.0f;
+    const float scale_x = static_cast<float>(frame_width) / static_cast<float>(input_width_);
+    const float scale_y = static_cast<float>(frame_height) / static_cast<float>(input_height_);
 
     std::vector<cv::Rect> boxes;
     std::vector<float> scores;
     std::vector<int> class_ids;
+    boxes.reserve(static_cast<size_t>(num_predictions / 8));
+    scores.reserve(boxes.capacity());
+    class_ids.reserve(boxes.capacity());
 
     for (int64_t pred = 0; pred < num_predictions; ++pred) {
         const float x = data[pred];
@@ -558,7 +570,7 @@ void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<
             }
         }
 
-        if (max_conf <= conf_threshold) {
+        if (max_conf <= confidence_threshold_) {
             continue;
         }
 
@@ -577,11 +589,16 @@ void InferenceEngine::parseYOLO(std::shared_ptr<Frame> frame, const std::vector<
     }
 
     std::vector<int> indices;
-    cv::dnn::NMSBoxes(boxes, scores, conf_threshold, iou_threshold, indices);
+    cv::dnn::NMSBoxes(boxes, scores, confidence_threshold_, iou_threshold_, indices);
+    detections.reserve(indices.size());
 
     for (int idx : indices) {
-        frame->detections.push_back({classIdToLabel(class_ids[idx]), scores[idx], BBox(boxes[idx])});
+        detections.push_back({classIdToLabel(class_ids[idx]), scores[idx], BBox(boxes[idx])});
     }
 
-    std::cout << "[DEBUG] detections: " << frame->detections.size() << std::endl;
+    if (verbose_logging_) {
+        std::cout << "[YOLO] detections: " << detections.size() << std::endl;
+    }
+
+    return detections;
 }

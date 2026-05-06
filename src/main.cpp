@@ -9,11 +9,14 @@
 #include <string>
 #include <filesystem>
 #include <stdexcept>
+#include <algorithm>
 
 #include <opencv2/opencv.hpp>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -26,6 +29,7 @@
 
 #include "inference_engine.h"
 #include "camera_manager.h"
+#include "tracking_manager.h"
 #include "webrtc_service.h"
 
 std::atomic<bool> g_running{true};
@@ -37,6 +41,16 @@ int readEnvInt(const char* name, int fallback) {
             return std::stoi(raw);
         } catch (...) {
         }
+    }
+
+    return fallback;
+}
+
+bool readEnvBool(const char* name, bool fallback) {
+    if (const char* raw = std::getenv(name)) {
+        const std::string value(raw);
+        return value == "1" || value == "true" || value == "TRUE" ||
+               value == "yes" || value == "YES";
     }
 
     return fallback;
@@ -70,6 +84,10 @@ std::filesystem::path sourceRootHint() {
 }
 
 std::filesystem::path resolveExistingPath(const std::string& raw_path) {
+    if (raw_path.empty()) {
+        return {};
+    }
+
     const std::filesystem::path input(raw_path);
     if (input.is_absolute() && std::filesystem::exists(input)) {
         return input;
@@ -103,23 +121,23 @@ std::filesystem::path resolveExistingPath(const std::string& raw_path) {
 
 void drainDetectionResults(
     InferenceEngine& inference_engine,
-    WebRTCService& webrtc_service)
+    TrackingManager& tracking_manager)
 {
     while (auto result = inference_engine.getResult()) {
-        webrtc_service.sendDetectionResult(result);
+        tracking_manager.submitDetections(result);
     }
 }
 
 void detectionPublishLoop(
     InferenceEngine& inference_engine,
-    WebRTCService& webrtc_service)
+    TrackingManager& tracking_manager)
 {
     while (g_running) {
-        drainDetectionResults(inference_engine, webrtc_service);
+        drainDetectionResults(inference_engine, tracking_manager);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    drainDetectionResults(inference_engine, webrtc_service);
+    drainDetectionResults(inference_engine, tracking_manager);
 }
 }
 
@@ -169,11 +187,18 @@ int main() {
     std::cout << "[INFO] Starting Camera CV Service..." << std::endl;
     std::signal(SIGINT, signalHandler);
 
-    const auto model_path = resolveExistingPath("models/yolov8x.onnx");
-    const auto test_video_path = resolveExistingPath("test_video.mp4");
+    const auto model_path = resolveExistingPath(
+        std::getenv("CAMERA_MODEL_PATH") ? std::getenv("CAMERA_MODEL_PATH") : "models/yolov8x.onnx");
+    const auto test_video_path = std::getenv("CAMERA_TEST_VIDEO_PATH")
+        ? resolveExistingPath(std::getenv("CAMERA_TEST_VIDEO_PATH"))
+        : resolveExistingPath("test_video.mp4");
 
     std::cout << "[INFO] Model path: " << model_path.string() << std::endl;
-    std::cout << "[INFO] Test video path: " << test_video_path.string() << std::endl;
+    if (!test_video_path.empty()) {
+        std::cout << "[INFO] Test video path: " << test_video_path.string() << std::endl;
+    } else {
+        std::cout << "[INFO] Test video path: not configured" << std::endl;
+    }
 
     if (!std::filesystem::exists(model_path)) {
         std::cerr << "[ERROR] Model file was not found: " << model_path.string() << std::endl;
@@ -188,6 +213,7 @@ int main() {
         }
 
         CameraManager camera_manager(&inference_engine);
+        TrackingManager tracking_manager;
         WebRTCServiceConfig webrtc_config;
         webrtc_config.signaling_url =
             std::getenv("CAMERA_SIGNALING_URL") ? std::getenv("CAMERA_SIGNALING_URL") : "ws://127.0.0.1:3001/ws";
@@ -197,6 +223,11 @@ int main() {
         webrtc_config.max_live_latency_ms = readEnvInt("CAMERA_MAX_LIVE_LATENCY_MS", 150);
         webrtc_config.max_live_width = readEnvInt("CAMERA_MAX_LIVE_WIDTH", 1280);
         webrtc_config.max_live_height = readEnvInt("CAMERA_MAX_LIVE_HEIGHT", 720);
+        webrtc_config.video_latency_sample_interval_ms =
+            readEnvInt("CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS", 1000);
+        webrtc_config.max_detection_buffered_bytes =
+            static_cast<size_t>(readEnvInt("CAMERA_MAX_DETECTION_BUFFERED_BYTES", 128 * 1024));
+        webrtc_config.verbose_logging = readEnvBool("CAMERA_VERBOSE_LOGS", false);
         webrtc_config.openh264_dll_path = resolveExistingPath("openh264-2.6.0-win64.dll").string();
         if (const char* remote_peer_id = std::getenv("CAMERA_REMOTE_PEER_ID")) {
             if (std::strlen(remote_peer_id) > 0) {
@@ -205,12 +236,13 @@ int main() {
         }
         WebRTCService webrtc_service(std::move(webrtc_config));
 
-        std::vector<std::string> camera_ids = detectConnectedCameras(camera_manager, 10);
+        const int max_camera_scan = std::clamp(readEnvInt("CAMERA_MAX_CAMERA_SCAN", 10), 0, 64);
+        std::vector<std::string> camera_ids = detectConnectedCameras(camera_manager, max_camera_scan);
 
         std::vector<std::string> video_files;
-        if (std::filesystem::exists(test_video_path)) {
+        if (!test_video_path.empty() && std::filesystem::is_regular_file(test_video_path)) {
             video_files.push_back(test_video_path.string());
-        } else {
+        } else if (!test_video_path.empty()) {
             std::cout << "[INFO] Optional test video was not found, skipping: "
                       << test_video_path.string() << std::endl;
         }
@@ -222,10 +254,17 @@ int main() {
             return 1;
         }
 
+        for (const auto& id : camera_ids) {
+            webrtc_service.addVideoSource(id);
+        }
+        for (const auto& id : video_ids) {
+            webrtc_service.addVideoSource(id);
+        }
+
         camera_manager.startAllCameras();
         inference_engine.start();
         webrtc_service.start();
-        std::thread detection_thread(detectionPublishLoop, std::ref(inference_engine), std::ref(webrtc_service));
+        std::thread detection_thread(detectionPublishLoop, std::ref(inference_engine), std::ref(tracking_manager));
 
         std::cout << "[INFO] Service started. Processing frames with WebRTC transport..." << std::endl;
 
@@ -244,8 +283,11 @@ int main() {
                         frame->camera_id = id;
                     }
 
-                    webrtc_service.sendLiveFrame(frame);
+                    webrtc_service.sendFrame(frame->camera_id, frame);
                     inference_engine.processFrame(frame);
+                    if (auto tracked_frame = tracking_manager.buildTrackedFrame(frame)) {
+                        webrtc_service.sendDetectionResult(tracked_frame);
+                    }
                 }
             };
 

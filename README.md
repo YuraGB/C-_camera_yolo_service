@@ -6,6 +6,7 @@
 - runs YOLO inference through ONNX Runtime
 - sends low-latency live video to the browser over a native WebRTC video track
 - sends detection metadata over a separate WebRTC DataChannel
+- sends throttled live-video latency samples over the same DataChannel
 
 The service is split into two independent pipelines:
 
@@ -17,6 +18,10 @@ The service is split into two independent pipelines:
   - asynchronous
   - may lag behind live video
   - sends compact detection payloads
+- `latency sampling`
+  - independent from YOLO
+  - samples the live video path at a configurable interval
+  - estimates capture-to-browser-render latency on the frontend
 
 ## Transport Model
 
@@ -51,14 +56,16 @@ Current behavior:
 
 This is intentional: the browser should see the newest frame, not a delayed queue.
 
-## Detection Stream
+## DataChannel Messages
 
-Detection metadata is sent through a separate WebRTC DataChannel labeled `detectionStream`.
+Detection metadata and live-video latency samples are sent through a WebRTC DataChannel labeled `detectionStream`.
 
-Payload format:
+Detection payload:
 
 ```json
 {
+  "type": "detection_frame",
+  "camera_id": "camera_0",
   "timestamp": 12.533,
   "detections": [
     {
@@ -75,11 +82,27 @@ Payload format:
 }
 ```
 
+Live-video latency sample payload:
+
+```json
+{
+  "type": "video_latency_sample",
+  "camera_id": "camera_0",
+  "frame_id": 12345,
+  "capture_timestamp_ms": 1715000000000,
+  "encoded_timestamp_ms": 1715000000024,
+  "sample_interval_ms": 1000
+}
+```
+
 Notes:
 
 - `timestamp` is emitted in relative seconds from service start
 - detections may arrive later than the corresponding live video frame
 - slow detection must not stall live playback
+- `video_latency_sample` is generated from the live video path, not the YOLO path
+- latency samples are throttled by `CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS`
+- the frontend uses `requestVideoFrameCallback` to estimate capture-to-render latency
 
 ## Signaling
 
@@ -88,6 +111,7 @@ The service expects an external WebSocket signaling server.
 It supports:
 
 - peer registration
+- viewer join / offer request messages
 - local offer creation
 - remote offer handling
 - remote answer handling
@@ -99,6 +123,14 @@ Common signaling message shapes:
 {
   "type": "register",
   "peerId": "camera-cv-service"
+}
+```
+
+```json
+{
+  "type": "viewer-join",
+  "peerId": "frontend-abc",
+  "targetPeerId": "camera-cv-service"
 }
 ```
 
@@ -123,24 +155,59 @@ Common signaling message shapes:
 
 The service can either:
 
-- create the offer itself after a peer joins
+- create the offer itself after a `viewer-join`, `offer-request`, or `connect` message
 - or receive an incoming offer and answer it with the live track plus detection channel
 
 ## Runtime Configuration
 
 Main runtime configuration lives in [webrtc_service.h](/E:/Progects/test/camera_cv_service/include/webrtc_service.h) and [main.cpp](/E:/Progects/test/camera_cv_service/src/main.cpp).
 
+Local configuration templates:
+
+- `.env.example` is safe to commit
+- `.env` is local-only and ignored by git
+
+The executable reads environment variables from the process environment. In PowerShell, load `.env` before running:
+
+```powershell
+Get-Content .env | ForEach-Object {
+  if ($_ -and -not $_.TrimStart().StartsWith("#")) {
+    $name, $value = $_ -split "=", 2
+    [Environment]::SetEnvironmentVariable($name, $value, "Process")
+  }
+}
+.\build\bin\Release\camera_cv_service.exe
+```
+
 Useful environment variables:
 
+- `CAMERA_MODEL_PATH`
+- `CAMERA_TEST_VIDEO_PATH`
 - `CAMERA_SIGNALING_URL`
 - `CAMERA_PEER_ID`
 - `CAMERA_REMOTE_PEER_ID`
+- `CAMERA_MAX_CAMERA_SCAN`
+- `CAMERA_INFERENCE_WIDTH`
+- `CAMERA_INFERENCE_HEIGHT`
+- `CAMERA_CONF_THRESHOLD`
+- `CAMERA_IOU_THRESHOLD`
+- `CAMERA_H264_BITRATE_BPS`
+- `CAMERA_MAX_LIVE_LATENCY_MS`
+- `CAMERA_MAX_LIVE_WIDTH`
+- `CAMERA_MAX_LIVE_HEIGHT`
+- `CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS`
+- `CAMERA_MAX_DETECTION_BUFFERED_BYTES`
+- `CAMERA_VERBOSE_LOGS`
 
 Defaults:
 
 - signaling URL: `ws://127.0.0.1:3001/ws`
 - local peer id: `camera-cv-service`
 - ICE server: `stun:stun.l.google.com:19302`
+- inference size: `640x640`
+- H264 bitrate: `2500000`
+- max live latency: `150ms`
+- live-video latency sample interval: `1000ms`
 
 ## Build Dependencies
 
@@ -171,10 +238,13 @@ build/bin/Release/camera_cv_service.exe
 - an optional `test_video.mp4` beside the executable is used automatically when present
 - `openh264-2.6.0-win64.dll` is copied into the runtime output during the build
 - ONNX Runtime 1.18 GPU loading still depends on a matching CUDA/cuDNN runtime on the machine
+- GPU execution is attempted first when CUDA is available; CPU remains the fallback
 
 ## Current Design Constraints
 
 - live video uses native WebRTC media transport
 - detection metadata uses a DataChannel, not a second media track
 - detection timing is intentionally decoupled from live playback
+- live-video latency sampling is intentionally decoupled from detection timing
+- exact frame-to-sample correlation is best-effort because browser `<video>` does not expose RTP frame ids directly
 - if the browser or network is slower than capture, the service prefers dropping outdated live frames over increasing latency

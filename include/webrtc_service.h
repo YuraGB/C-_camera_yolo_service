@@ -3,14 +3,15 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <condition_variable>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include <chrono>
 
 #include <nlohmann/json.hpp>
 #include <rtc/rtc.hpp>
@@ -29,7 +30,9 @@ struct WebRTCServiceConfig {
   int max_live_latency_ms = 150;
   int max_live_width = 1280;
   int max_live_height = 720;
+  int video_latency_sample_interval_ms = 1000;
   std::string openh264_dll_path = "third_party/openh264-2.6.0-win64.dll";
+  bool verbose_logging = false;
 };
 
 class WebRTCService {
@@ -43,57 +46,97 @@ class WebRTCService {
   void start();
   void stop();
 
-  void sendLiveFrame(const std::shared_ptr<Frame>& frame);
+  void addVideoSource(const std::string& camera_id);
+  void sendFrame(const std::string& camera_id, const std::shared_ptr<Frame>& frame);
   void sendDetectionResult(const std::shared_ptr<Frame>& frame);
 
   void createOfferForPeer(const std::string& peer_id);
   void handleSignalingMessage(const std::string& message);
 
  private:
+  struct SourceStreamState {
+    std::string camera_id;
+    std::string track_mid;
+    std::mutex frame_mutex;
+    std::condition_variable frame_cv;
+    std::shared_ptr<Frame> latest_frame;
+    std::thread worker_thread;
+    std::unique_ptr<OpenH264Encoder> encoder;
+    std::atomic<bool> running{false};
+    std::mutex timeline_mutex;
+    int64_t first_live_timestamp_ms = -1;
+    int64_t dropped_stale_live_frames = 0;
+    int64_t last_encoded_frame_timestamp_ms = -1;
+    int64_t last_latency_sample_sent_ms = -1;
+    double smoothed_live_fps = 0.0;
+    int64_t encoded_frame_count = 0;
+  };
+
   struct PeerSession {
     std::string peer_id;
     std::shared_ptr<rtc::PeerConnection> peer_connection;
-    std::shared_ptr<rtc::Track> live_track;
+    std::unordered_map<std::string, std::shared_ptr<rtc::Track>> video_tracks;
+    std::unordered_map<std::string, uint32_t> video_ssrcs;
     std::shared_ptr<rtc::DataChannel> detection_channel;
-    std::atomic<bool> connected{false};
     std::atomic<bool> configured{false};
-    uint32_t video_ssrc = 0;
   };
 
   std::shared_ptr<PeerSession> createPeerSession(const std::string& peer_id);
   void configurePeerSession(const std::shared_ptr<PeerSession>& session, bool create_local_channels);
   void attachDataChannel(const std::shared_ptr<PeerSession>& session, const std::shared_ptr<rtc::DataChannel>& channel);
-  void attachVideoTrack(const std::shared_ptr<PeerSession>& session);
+  void attachVideoTrack(const std::shared_ptr<PeerSession>& session, const std::shared_ptr<SourceStreamState>& source_state);
   void cleanupPeerSession(const std::string& peer_id);
+  void cleanupFrontendSessionsExcept(const std::string& active_peer_id);
 
   std::string buildDetectionMessage(const Frame& frame) const;
-  void videoLoop();
-  void encodeAndBroadcastVideo(const std::shared_ptr<Frame>& frame);
+  std::string buildVideoLatencySampleMessage(
+      const SourceStreamState& source_state,
+      const Frame& frame,
+      int64_t encoded_timestamp_ms) const;
   void broadcastDetectionMessage(const std::string& message);
+  void maybeSendVideoLatencySample(
+      const std::shared_ptr<SourceStreamState>& source_state,
+      const std::shared_ptr<Frame>& frame,
+      int64_t encoded_timestamp_ms);
+  void sendTrackMap(const std::shared_ptr<PeerSession>& session);
+
+  void sourceLoop(const std::shared_ptr<SourceStreamState>& source_state);
+  void encodeAndBroadcastVideo(
+      const std::shared_ptr<SourceStreamState>& source_state,
+      const std::shared_ptr<Frame>& frame);
+
+  void startSourceWorker(const std::shared_ptr<SourceStreamState>& source_state);
+  void stopSourceWorker(const std::shared_ptr<SourceStreamState>& source_state);
 
   void sendSignalingJson(const std::string& payload);
   void flushPendingSignalingMessages();
   std::optional<std::string> extractPeerId(const nlohmann::json& message) const;
+  void connectSignalingSocket();
+  void closeSignalingSocket();
+  void scheduleSignalingReconnect(std::chrono::milliseconds delay, const std::string& reason);
+  void signalingReconnectLoop();
+  bool isActiveSignalingGeneration(uint64_t generation);
 
   WebRTCServiceConfig config_;
+
   std::mutex sessions_mutex_;
   std::unordered_map<std::string, std::shared_ptr<PeerSession>> sessions_;
 
-  std::mutex live_frame_mutex_;
-  std::condition_variable live_frame_cv_;
-  std::shared_ptr<Frame> latest_live_frame_;
-  std::thread video_thread_;
-  std::mutex live_timeline_mutex_;
-  int64_t first_live_timestamp_ms_ = -1;
-  int64_t dropped_stale_live_frames_ = 0;
-  int64_t last_encoded_frame_timestamp_ms_ = -1;
-  double smoothed_live_fps_ = 0.0;
+  std::mutex sources_mutex_;
+  std::unordered_map<std::string, std::shared_ptr<SourceStreamState>> sources_;
 
   std::mutex signaling_mutex_;
   std::vector<std::string> pending_signaling_messages_;
   std::shared_ptr<rtc::WebSocket> signaling_socket_;
+  std::atomic<bool> signaling_connected_{false};
+  std::atomic<bool> signaling_connect_in_progress_{false};
+  std::mutex reconnect_mutex_;
+  std::condition_variable reconnect_cv_;
+  std::thread reconnect_thread_;
+  bool reconnect_requested_ = false;
+  std::chrono::milliseconds reconnect_delay_{0};
+  int reconnect_attempt_ = 0;
+  uint64_t signaling_generation_ = 0;
   std::atomic<bool> running_{false};
   int64_t service_start_timestamp_ms_ = 0;
-  std::unique_ptr<OpenH264Encoder> video_encoder_;
-  int64_t encoded_frame_count_ = 0;
 };
