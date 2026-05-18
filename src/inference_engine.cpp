@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <chrono>
 #include <opencv2/opencv.hpp>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -405,10 +406,12 @@ bool InferenceEngine::isReady() const {
 void InferenceEngine::processFrame(std::shared_ptr<Frame> frame) {
     if (!frame || !running_ || !session_) return;
 
+    submitted_frames_.fetch_add(1);
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         while (!input_queue_.empty()) {
             input_queue_.pop();
+            dropped_pending_frames_.fetch_add(1);
         }
         input_queue_.push(frame);
     }
@@ -430,6 +433,24 @@ std::shared_ptr<Frame> InferenceEngine::getResult() {
     output_queue_.pop();
 
     return frame;
+}
+
+InferenceMetricsSnapshot InferenceEngine::consumeMetricsSnapshot() {
+    InferenceMetricsSnapshot snapshot;
+    snapshot.submitted_frames = submitted_frames_.exchange(0);
+    snapshot.dropped_pending_frames = dropped_pending_frames_.exchange(0);
+    snapshot.processed_frames = processed_frames_.exchange(0);
+    snapshot.total_detections = total_detections_.exchange(0);
+
+    const int64_t total_us = total_inference_us_.exchange(0);
+    const int64_t max_us = max_inference_us_.exchange(0);
+    if (snapshot.processed_frames > 0) {
+        snapshot.avg_inference_ms =
+            static_cast<double>(total_us) / static_cast<double>(snapshot.processed_frames) / 1000.0;
+        snapshot.max_inference_ms = static_cast<double>(max_us) / 1000.0;
+    }
+
+    return snapshot;
 }
 
 void InferenceEngine::inferenceLoop() {
@@ -466,6 +487,7 @@ void InferenceEngine::inferenceLoop() {
 std::shared_ptr<Frame> InferenceEngine::processFrameImpl(const std::shared_ptr<Frame>& frame) {
     if (!frame || frame->mat.empty() || !session_) return nullptr;
 
+    const auto inference_started = std::chrono::steady_clock::now();
     prepareInputTensor(frame->mat);
 
     try {
@@ -495,6 +517,16 @@ std::shared_ptr<Frame> InferenceEngine::processFrameImpl(const std::shared_ptr<F
             result_frame->frame_id = frame->frame_id;
             result_frame->timestamp = frame->timestamp;
             result_frame->detections = parseYOLO(output_data, output_shape, frame->mat.cols, frame->mat.rows);
+            const auto inference_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - inference_started).count();
+            processed_frames_.fetch_add(1);
+            total_detections_.fetch_add(static_cast<int64_t>(result_frame->detections.size()));
+            total_inference_us_.fetch_add(inference_us);
+
+            int64_t previous_max = max_inference_us_.load();
+            while (inference_us > previous_max &&
+                   !max_inference_us_.compare_exchange_weak(previous_max, inference_us)) {
+            }
             return result_frame;
         }
 

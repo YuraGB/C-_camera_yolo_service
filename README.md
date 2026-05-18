@@ -104,6 +104,44 @@ Notes:
 - latency samples are throttled by `CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS`
 - the frontend uses `requestVideoFrameCallback` to estimate capture-to-render latency
 
+Pipeline metrics payload:
+
+```json
+{
+  "type": "pipeline_metrics",
+  "scope": "video",
+  "camera_id": "camera_0",
+  "interval_ms": 1000,
+  "capture_fps": 29.8,
+  "encode_fps": 29.8,
+  "avg_capture_delay_ms": 4.2,
+  "max_capture_delay_ms": 12,
+  "avg_h264_encode_ms": 3.1,
+  "max_h264_encode_ms": 7.8,
+  "dropped_stale_frames": 0,
+  "total_dropped_stale_frames": 0,
+  "estimated_live_fps": 29.7
+}
+```
+
+YOLO inference metrics payload:
+
+```json
+{
+  "type": "pipeline_metrics",
+  "scope": "inference",
+  "interval_ms": 1000,
+  "submitted_frames": 30,
+  "dropped_pending_frames": 20,
+  "processed_frames": 8,
+  "total_detections": 14,
+  "avg_inference_ms": 76.3,
+  "max_inference_ms": 91.2
+}
+```
+
+Metrics are aggregated in memory and published at a low rate. They should not log or serialize per frame.
+
 ## Signaling
 
 The service expects an external WebSocket signaling server.
@@ -196,6 +234,7 @@ Useful environment variables:
 - `CAMERA_MAX_LIVE_WIDTH`
 - `CAMERA_MAX_LIVE_HEIGHT`
 - `CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS`
+- `CAMERA_PIPELINE_METRICS_INTERVAL_MS`
 - `CAMERA_MAX_DETECTION_BUFFERED_BYTES`
 - `CAMERA_VERBOSE_LOGS`
 
@@ -208,6 +247,7 @@ Defaults:
 - H264 bitrate: `2500000`
 - max live latency: `150ms`
 - live-video latency sample interval: `1000ms`
+- pipeline metrics interval: `1000ms`
 
 ## Build Dependencies
 

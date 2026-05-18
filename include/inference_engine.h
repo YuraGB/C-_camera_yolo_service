@@ -8,8 +8,18 @@
 #include <queue>
 #include <condition_variable>
 #include <atomic>
+#include <cstdint>
 #include <onnxruntime_cxx_api.h>
 #include "frame.h"
+
+struct InferenceMetricsSnapshot {
+    int64_t submitted_frames = 0;
+    int64_t dropped_pending_frames = 0;
+    int64_t processed_frames = 0;
+    int64_t total_detections = 0;
+    double avg_inference_ms = 0.0;
+    double max_inference_ms = 0.0;
+};
 
 class InferenceEngine {
 public:
@@ -25,6 +35,7 @@ public:
 
     void processFrame(std::shared_ptr<Frame> frame);
     std::shared_ptr<Frame> getResult();
+    InferenceMetricsSnapshot consumeMetricsSnapshot();
 
 private:
     void inferenceLoop();
@@ -64,4 +75,11 @@ private:
     Ort::MemoryInfo memory_info_;
     std::vector<float> input_tensor_values_;
     std::vector<int64_t> input_shape_;
+
+    std::atomic<int64_t> submitted_frames_{0};
+    std::atomic<int64_t> dropped_pending_frames_{0};
+    std::atomic<int64_t> processed_frames_{0};
+    std::atomic<int64_t> total_detections_{0};
+    std::atomic<int64_t> total_inference_us_{0};
+    std::atomic<int64_t> max_inference_us_{0};
 };

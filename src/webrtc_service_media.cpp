@@ -1,5 +1,6 @@
 #include "webrtc_service.h"
 
+#include <algorithm>
 #include <iostream>
 
 #include <nlohmann/json.hpp>
@@ -28,6 +29,17 @@ void WebRTCService::sendFrame(const std::string& camera_id,
     std::lock_guard<std::mutex> lock(source_state->frame_mutex);
     source_state->latest_frame = frame;
   }
+
+  const int64_t now_ms = currentTimestampMs();
+  const int64_t capture_delay_ms =
+      (frame->timestamp > 0) ? std::max<int64_t>(0, now_ms - frame->timestamp) : 0;
+  {
+    std::lock_guard<std::mutex> lock(source_state->timeline_mutex);
+    ++source_state->metrics_received_frames;
+    source_state->metrics_capture_delay_sum_ms += capture_delay_ms;
+    source_state->metrics_capture_delay_max_ms =
+        std::max(source_state->metrics_capture_delay_max_ms, capture_delay_ms);
+  }
   source_state->frame_cv.notify_one();
 }
 
@@ -44,6 +56,14 @@ void WebRTCService::sendDetectionResult(const std::shared_ptr<Frame>& frame) {
               << ", timestamp=" << frame->timestamp << std::endl;
   }
   broadcastDetectionMessage(buildDetectionMessage(*frame));
+}
+
+void WebRTCService::sendPipelineMetrics(const nlohmann::json& payload) {
+  if (!running_) {
+    return;
+  }
+
+  broadcastDetectionMessage(payload.dump());
 }
 
 std::string WebRTCService::buildDetectionMessage(const Frame& frame) const {
@@ -67,6 +87,44 @@ std::string WebRTCService::buildDetectionMessage(const Frame& frame) const {
          }},
     });
   }
+
+  return payload.dump();
+}
+
+std::string WebRTCService::buildVideoPipelineMetricsMessage(
+    const SourceStreamState& source_state,
+    int64_t now_ms) const {
+  const int64_t interval_ms = std::max<int64_t>(
+      1, source_state.last_pipeline_metrics_sent_ms > 0
+             ? now_ms - source_state.last_pipeline_metrics_sent_ms
+             : config_.pipeline_metrics_interval_ms);
+  const double interval_seconds = static_cast<double>(interval_ms) / 1000.0;
+  const double avg_capture_delay_ms =
+      source_state.metrics_received_frames > 0
+          ? static_cast<double>(source_state.metrics_capture_delay_sum_ms) /
+                static_cast<double>(source_state.metrics_received_frames)
+          : 0.0;
+  const double avg_encode_ms =
+      source_state.metrics_encoded_frames > 0
+          ? static_cast<double>(source_state.metrics_encode_sum_us) /
+                static_cast<double>(source_state.metrics_encoded_frames) / 1000.0
+          : 0.0;
+
+  nlohmann::json payload = {
+      {"type", "pipeline_metrics"},
+      {"scope", "video"},
+      {"camera_id", source_state.camera_id},
+      {"interval_ms", interval_ms},
+      {"capture_fps", static_cast<double>(source_state.metrics_received_frames) / interval_seconds},
+      {"encode_fps", static_cast<double>(source_state.metrics_encoded_frames) / interval_seconds},
+      {"avg_capture_delay_ms", avg_capture_delay_ms},
+      {"max_capture_delay_ms", source_state.metrics_capture_delay_max_ms},
+      {"avg_h264_encode_ms", avg_encode_ms},
+      {"max_h264_encode_ms", static_cast<double>(source_state.metrics_encode_max_us) / 1000.0},
+      {"dropped_stale_frames", source_state.metrics_dropped_stale_frames},
+      {"total_dropped_stale_frames", source_state.dropped_stale_live_frames},
+      {"estimated_live_fps", source_state.smoothed_live_fps},
+  };
 
   return payload.dump();
 }
@@ -148,6 +206,40 @@ void WebRTCService::maybeSendVideoLatencySample(
       buildVideoLatencySampleMessage(*source_state, *frame, encoded_timestamp_ms));
 }
 
+void WebRTCService::maybeSendVideoPipelineMetrics(
+    const std::shared_ptr<SourceStreamState>& source_state,
+    int64_t now_ms) {
+  if (!source_state || config_.pipeline_metrics_interval_ms <= 0) {
+    return;
+  }
+
+  std::string message;
+  {
+    std::lock_guard<std::mutex> lock(source_state->timeline_mutex);
+    if (source_state->last_pipeline_metrics_sent_ms < 0) {
+      source_state->last_pipeline_metrics_sent_ms = now_ms;
+      return;
+    }
+
+    if (now_ms - source_state->last_pipeline_metrics_sent_ms <
+        config_.pipeline_metrics_interval_ms) {
+      return;
+    }
+
+    message = buildVideoPipelineMetricsMessage(*source_state, now_ms);
+    source_state->last_pipeline_metrics_sent_ms = now_ms;
+    source_state->metrics_received_frames = 0;
+    source_state->metrics_encoded_frames = 0;
+    source_state->metrics_dropped_stale_frames = 0;
+    source_state->metrics_capture_delay_sum_ms = 0;
+    source_state->metrics_capture_delay_max_ms = 0;
+    source_state->metrics_encode_sum_us = 0;
+    source_state->metrics_encode_max_us = 0;
+  }
+
+  broadcastDetectionMessage(message);
+}
+
 void WebRTCService::sourceLoop(
     const std::shared_ptr<SourceStreamState>& source_state) {
   while (running_ && source_state->running) {
@@ -191,6 +283,10 @@ void WebRTCService::encodeAndBroadcastVideo(
   if (config_.max_live_latency_ms > 0 &&
       live_lag_ms > config_.max_live_latency_ms) {
     ++source_state->dropped_stale_live_frames;
+    {
+      std::lock_guard<std::mutex> lock(source_state->timeline_mutex);
+      ++source_state->metrics_dropped_stale_frames;
+    }
     if ((source_state->dropped_stale_live_frames % 30) == 1) {
       std::cout << "[WebRTC] Dropping stale frame for camera_id="
                 << source_state->camera_id << ", lag=" << live_lag_ms
@@ -214,9 +310,20 @@ void WebRTCService::encodeAndBroadcastVideo(
   const bool force_idr =
       shouldForceKeyframe(source_state->encoded_frame_count,
                           source_state->smoothed_live_fps);
+  const auto encode_started = std::chrono::steady_clock::now();
   auto bitstream = source_state->encoder->encode(live_mat, frame->timestamp, force_idr);
+  const auto encode_us = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now() - encode_started).count();
   if (bitstream.empty()) {
     return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(source_state->timeline_mutex);
+    ++source_state->metrics_encoded_frames;
+    source_state->metrics_encode_sum_us += encode_us;
+    source_state->metrics_encode_max_us =
+        std::max<int64_t>(source_state->metrics_encode_max_us, encode_us);
   }
 
   int64_t first_live_timestamp_ms = 0;
@@ -248,6 +355,7 @@ void WebRTCService::encodeAndBroadcastVideo(
   }
 
   maybeSendVideoLatencySample(source_state, frame, currentTimestampMs());
+  maybeSendVideoPipelineMetrics(source_state, currentTimestampMs());
   source_state->last_encoded_frame_timestamp_ms = frame->timestamp;
   ++source_state->encoded_frame_count;
 }
@@ -288,7 +396,15 @@ void WebRTCService::stopSourceWorker(
     source_state->dropped_stale_live_frames = 0;
     source_state->last_encoded_frame_timestamp_ms = -1;
     source_state->last_latency_sample_sent_ms = -1;
+    source_state->last_pipeline_metrics_sent_ms = -1;
     source_state->smoothed_live_fps = 0.0;
     source_state->encoded_frame_count = 0;
+    source_state->metrics_received_frames = 0;
+    source_state->metrics_encoded_frames = 0;
+    source_state->metrics_dropped_stale_frames = 0;
+    source_state->metrics_capture_delay_sum_ms = 0;
+    source_state->metrics_capture_delay_max_ms = 0;
+    source_state->metrics_encode_sum_us = 0;
+    source_state->metrics_encode_max_us = 0;
   }
 }
