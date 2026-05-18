@@ -31,6 +31,7 @@ struct WebRTCServiceConfig {
   int max_live_width = 1280;
   int max_live_height = 720;
   int video_latency_sample_interval_ms = 1000;
+  int pipeline_metrics_interval_ms = 1000;
   std::string openh264_dll_path = "third_party/openh264-2.6.0-win64.dll";
   bool verbose_logging = false;
 };
@@ -49,6 +50,7 @@ class WebRTCService {
   void addVideoSource(const std::string& camera_id);
   void sendFrame(const std::string& camera_id, const std::shared_ptr<Frame>& frame);
   void sendDetectionResult(const std::shared_ptr<Frame>& frame);
+  void sendPipelineMetrics(const nlohmann::json& payload);
 
   void createOfferForPeer(const std::string& peer_id);
   void handleSignalingMessage(const std::string& message);
@@ -68,8 +70,16 @@ class WebRTCService {
     int64_t dropped_stale_live_frames = 0;
     int64_t last_encoded_frame_timestamp_ms = -1;
     int64_t last_latency_sample_sent_ms = -1;
+    int64_t last_pipeline_metrics_sent_ms = -1;
     double smoothed_live_fps = 0.0;
     int64_t encoded_frame_count = 0;
+    int64_t metrics_received_frames = 0;
+    int64_t metrics_encoded_frames = 0;
+    int64_t metrics_dropped_stale_frames = 0;
+    int64_t metrics_capture_delay_sum_ms = 0;
+    int64_t metrics_capture_delay_max_ms = 0;
+    int64_t metrics_encode_sum_us = 0;
+    int64_t metrics_encode_max_us = 0;
   };
 
   struct PeerSession {
@@ -93,11 +103,17 @@ class WebRTCService {
       const SourceStreamState& source_state,
       const Frame& frame,
       int64_t encoded_timestamp_ms) const;
+  std::string buildVideoPipelineMetricsMessage(
+      const SourceStreamState& source_state,
+      int64_t now_ms) const;
   void broadcastDetectionMessage(const std::string& message);
   void maybeSendVideoLatencySample(
       const std::shared_ptr<SourceStreamState>& source_state,
       const std::shared_ptr<Frame>& frame,
       int64_t encoded_timestamp_ms);
+  void maybeSendVideoPipelineMetrics(
+      const std::shared_ptr<SourceStreamState>& source_state,
+      int64_t now_ms);
   void sendTrackMap(const std::shared_ptr<PeerSession>& session);
 
   void sourceLoop(const std::shared_ptr<SourceStreamState>& source_state);

@@ -12,6 +12,7 @@
 #include <algorithm>
 
 #include <opencv2/opencv.hpp>
+#include <nlohmann/json.hpp>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -139,6 +140,39 @@ void detectionPublishLoop(
 
     drainDetectionResults(inference_engine, tracking_manager);
 }
+
+void inferenceMetricsPublishLoop(
+    InferenceEngine& inference_engine,
+    WebRTCService& webrtc_service,
+    int interval_ms)
+{
+    if (interval_ms <= 0) {
+        return;
+    }
+
+    while (g_running) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        const auto snapshot = inference_engine.consumeMetricsSnapshot();
+        if (snapshot.submitted_frames == 0 &&
+            snapshot.processed_frames == 0 &&
+            snapshot.dropped_pending_frames == 0) {
+            continue;
+        }
+
+        nlohmann::json payload = {
+            {"type", "pipeline_metrics"},
+            {"scope", "inference"},
+            {"interval_ms", interval_ms},
+            {"submitted_frames", snapshot.submitted_frames},
+            {"dropped_pending_frames", snapshot.dropped_pending_frames},
+            {"processed_frames", snapshot.processed_frames},
+            {"total_detections", snapshot.total_detections},
+            {"avg_inference_ms", snapshot.avg_inference_ms},
+            {"max_inference_ms", snapshot.max_inference_ms},
+        };
+        webrtc_service.sendPipelineMetrics(payload);
+    }
+}
 }
 
 void signalHandler(int signum) {
@@ -225,6 +259,8 @@ int main() {
         webrtc_config.max_live_height = readEnvInt("CAMERA_MAX_LIVE_HEIGHT", 720);
         webrtc_config.video_latency_sample_interval_ms =
             readEnvInt("CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS", 1000);
+        webrtc_config.pipeline_metrics_interval_ms =
+            readEnvInt("CAMERA_PIPELINE_METRICS_INTERVAL_MS", 1000);
         webrtc_config.max_detection_buffered_bytes =
             static_cast<size_t>(readEnvInt("CAMERA_MAX_DETECTION_BUFFERED_BYTES", 128 * 1024));
         webrtc_config.verbose_logging = readEnvBool("CAMERA_VERBOSE_LOGS", false);
@@ -265,6 +301,12 @@ int main() {
         inference_engine.start();
         webrtc_service.start();
         std::thread detection_thread(detectionPublishLoop, std::ref(inference_engine), std::ref(tracking_manager));
+        const int metrics_interval_ms = readEnvInt("CAMERA_PIPELINE_METRICS_INTERVAL_MS", 1000);
+        std::thread metrics_thread(
+            inferenceMetricsPublishLoop,
+            std::ref(inference_engine),
+            std::ref(webrtc_service),
+            metrics_interval_ms);
 
         std::cout << "[INFO] Service started. Processing frames with WebRTC transport..." << std::endl;
 
@@ -302,6 +344,9 @@ int main() {
         std::cout << "[INFO] Stopping services..." << std::endl;
         if (detection_thread.joinable()) {
             detection_thread.join();
+        }
+        if (metrics_thread.joinable()) {
+            metrics_thread.join();
         }
         camera_manager.stopAllCameras();
         inference_engine.stop();
