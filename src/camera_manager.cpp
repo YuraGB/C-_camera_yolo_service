@@ -3,6 +3,7 @@
 #include <chrono>
 #include <thread>
 #include <opencv2/opencv.hpp>
+#include "capture/video_source.h"
 
 namespace {
 int64_t currentWallClockMs() {
@@ -10,24 +11,6 @@ int64_t currentWallClockMs() {
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-bool isNumericSource(const std::string& source) {
-    if (source.empty()) {
-        return false;
-    }
-
-    size_t start = (source[0] == '-' || source[0] == '+') ? 1 : 0;
-    if (start >= source.size()) {
-        return false;
-    }
-
-    for (size_t i = start; i < source.size(); ++i) {
-        if (!std::isdigit(static_cast<unsigned char>(source[i]))) {
-            return false;
-        }
-    }
-
-    return true;
-}
 }  // namespace
 
 CameraManager::CameraManager(InferenceEngine* engine)
@@ -93,28 +76,15 @@ void CameraManager::captureLoop(const std::string& camera_id) {
         cam = it->second.get();
     }
 
-    bool opened = false;
-    cam->is_file_source = !isNumericSource(cam->source);
-
-    try {
-        int index = std::stoi(cam->source);
-        opened = cam->cap.open(index);
-        cam->is_file_source = false;
-    } catch (...) {
-        opened = cam->cap.open(cam->source);
-        if (!opened) {
-            std::cerr << "[WARN] Failed to open source: " << cam->source
-                      << " (check path and format)" << std::endl;
-            return;
-        }
-    }
+    const bool opened = cam->source_handle.open(cam->source);
+    cam->is_file_source = cam->source_handle.isFileSource();
 
     if (!opened) {
         std::cerr << "[WARN] Failed to open source: " << cam->source << std::endl;
         return;
     }
 
-    cam->source_fps = cam->cap.get(cv::CAP_PROP_FPS);
+    cam->source_fps = cam->source_handle.fps();
     cam->first_source_timestamp_ms = -1;
     cam->playback_start_wallclock_ms = 0;
     cam->playback_start_time = std::chrono::steady_clock::now();
@@ -126,7 +96,7 @@ void CameraManager::captureLoop(const std::string& camera_id) {
             return fallback_timestamp_ms;
         }
 
-        const double pos_msec = cam->cap.get(cv::CAP_PROP_POS_MSEC);
+        const double pos_msec = cam->source_handle.positionMs();
         if (pos_msec < 0.0) {
             return fallback_timestamp_ms;
         }
@@ -146,7 +116,7 @@ void CameraManager::captureLoop(const std::string& camera_id) {
             return;
         }
 
-        const double pos_msec = cam->cap.get(cv::CAP_PROP_POS_MSEC);
+        const double pos_msec = cam->source_handle.positionMs();
         if (pos_msec < 0.0) {
             return;
         }
@@ -174,13 +144,13 @@ void CameraManager::captureLoop(const std::string& camera_id) {
                 std::chrono::steady_clock::now() - cam->playback_start_time).count();
             const double target_source_ms =
                 static_cast<double>(cam->first_source_timestamp_ms + std::max<int64_t>(0, elapsed_ms));
-            const double current_source_ms = cam->cap.get(cv::CAP_PROP_POS_MSEC);
+            const double current_source_ms = cam->source_handle.positionMs();
 
             if (current_source_ms < 0.0 || current_source_ms + allowed_lag_ms >= target_source_ms) {
                 break;
             }
 
-            if (!cam->cap.grab()) {
+            if (!cam->source_handle.grab()) {
                 break;
             }
 
@@ -190,7 +160,7 @@ void CameraManager::captureLoop(const std::string& camera_id) {
 
     while (cam->running) {
         cv::Mat mat;
-        if (!cam->cap.read(mat) || mat.empty()) {
+        if (!cam->source_handle.read(mat) || mat.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
@@ -206,7 +176,7 @@ void CameraManager::captureLoop(const std::string& camera_id) {
         catchUpVideoFilePlayback();
     }
 
-    cam->cap.release();
+    cam->source_handle.release();
 }
 
 void CameraManager::enqueueFrame(std::shared_ptr<Frame> frame, CameraInfo& cam) {

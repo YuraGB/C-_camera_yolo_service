@@ -3,123 +3,22 @@
 #include <chrono>
 #include <atomic>
 #include <csignal>
-#include <cstdlib>
-#include <cstring>
 #include <vector>
 #include <string>
 #include <filesystem>
-#include <stdexcept>
-#include <algorithm>
 
-#include <opencv2/opencv.hpp>
 #include <nlohmann/json.hpp>
-
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-
-#undef min
-#undef max
-#elif defined(__linux__)
-#include <unistd.h>
-#endif
 
 #include "inference_engine.h"
 #include "camera_manager.h"
 #include "tracking_manager.h"
 #include "webrtc_service.h"
+#include "core/pipeline/runtime_config.h"
+#include "platform/platform_services.h"
 
 std::atomic<bool> g_running{true};
 
 namespace {
-int readEnvInt(const char* name, int fallback) {
-    if (const char* raw = std::getenv(name)) {
-        try {
-            return std::stoi(raw);
-        } catch (...) {
-        }
-    }
-
-    return fallback;
-}
-
-bool readEnvBool(const char* name, bool fallback) {
-    if (const char* raw = std::getenv(name)) {
-        const std::string value(raw);
-        return value == "1" || value == "true" || value == "TRUE" ||
-               value == "yes" || value == "YES";
-    }
-
-    return fallback;
-}
-
-std::filesystem::path getExecutableDir() {
-#ifdef _WIN32
-    std::wstring buffer(MAX_PATH, L'\0');
-    const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (length == 0) {
-        return {};
-    }
-
-    buffer.resize(length);
-    return std::filesystem::path(buffer).parent_path();
-#elif defined(__linux__)
-    std::vector<char> buffer(4096, '\0');
-    const ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size());
-    if (length <= 0) {
-        return {};
-    }
-
-    return std::filesystem::path(std::string(buffer.data(), static_cast<size_t>(length))).parent_path();
-#else
-    return {};
-#endif
-}
-
-std::filesystem::path sourceRootHint() {
-    return std::filesystem::path(__FILE__).parent_path().parent_path();
-}
-
-std::filesystem::path resolveExistingPath(const std::string& raw_path) {
-    if (raw_path.empty()) {
-        return {};
-    }
-
-    const std::filesystem::path input(raw_path);
-    if (input.is_absolute() && std::filesystem::exists(input)) {
-        return input;
-    }
-
-    std::vector<std::filesystem::path> candidates;
-    candidates.push_back(input);
-
-    const auto cwd = std::filesystem::current_path();
-    candidates.push_back(cwd / input);
-
-    const auto exe_dir = getExecutableDir();
-    if (!exe_dir.empty()) {
-        candidates.push_back(exe_dir / input);
-        candidates.push_back(exe_dir.parent_path() / input);
-        candidates.push_back(exe_dir.parent_path().parent_path() / input);
-    }
-
-    const auto source_root = sourceRootHint();
-    candidates.push_back(source_root / input);
-
-    for (const auto& candidate : candidates) {
-        std::error_code ec;
-        if (std::filesystem::exists(candidate, ec) && !ec) {
-            return std::filesystem::weakly_canonical(candidate, ec);
-        }
-    }
-
-    return input;
-}
-
 void drainDetectionResults(
     InferenceEngine& inference_engine,
     TrackingManager& tracking_manager)
@@ -180,18 +79,17 @@ void signalHandler(int signum) {
     g_running = false;
 }
 
-std::vector<std::string> detectConnectedCameras(CameraManager& camera_manager, int max_cams = 10) {
+std::vector<std::string> detectConnectedCameras(
+    CameraManager& camera_manager,
+    const platform::PlatformServices& platform_services,
+    int max_cams = 10) {
     std::vector<std::string> camera_ids;
 
-    for (int i = 0; i < max_cams; ++i) {
-        cv::VideoCapture cap(i);
-        if (cap.isOpened()) {
-            cap.release();
-            std::string cam_id = "camera_" + std::to_string(i);
-            if (camera_manager.addCamera(cam_id, std::to_string(i))) {
-                std::cout << "[INFO] Detected and added camera " << i << std::endl;
-                camera_ids.push_back(cam_id);
-            }
+    for (const int camera_index : platform_services.enumerateCameraIndices(max_cams)) {
+        std::string cam_id = "camera_" + std::to_string(camera_index);
+        if (camera_manager.addCamera(cam_id, std::to_string(camera_index))) {
+            std::cout << "[INFO] Detected and added camera " << camera_index << std::endl;
+            camera_ids.push_back(cam_id);
         }
     }
 
@@ -221,12 +119,12 @@ int main() {
     std::cout << "[INFO] Starting Camera CV Service..." << std::endl;
     std::signal(SIGINT, signalHandler);
 
-    const auto model_path = resolveExistingPath(
-        std::getenv("CAMERA_MODEL_PATH") ? std::getenv("CAMERA_MODEL_PATH") : "models/yolov8x.onnx");
-    const auto test_video_path = std::getenv("CAMERA_TEST_VIDEO_PATH")
-        ? resolveExistingPath(std::getenv("CAMERA_TEST_VIDEO_PATH"))
-        : resolveExistingPath("test_video.mp4");
+    auto platform_services = platform::createPlatformServices();
+    const auto runtime_config = core::pipeline::loadRuntimeConfig(*platform_services);
+    const auto& model_path = runtime_config.model_path;
+    const auto& test_video_path = runtime_config.test_video_path;
 
+    std::cout << "[INFO] Platform: " << platform_services->name() << std::endl;
     std::cout << "[INFO] Model path: " << model_path.string() << std::endl;
     if (!test_video_path.empty()) {
         std::cout << "[INFO] Test video path: " << test_video_path.string() << std::endl;
@@ -248,32 +146,12 @@ int main() {
 
         CameraManager camera_manager(&inference_engine);
         TrackingManager tracking_manager;
-        WebRTCServiceConfig webrtc_config;
-        webrtc_config.signaling_url =
-            std::getenv("CAMERA_SIGNALING_URL") ? std::getenv("CAMERA_SIGNALING_URL") : "ws://127.0.0.1:3001/ws";
-        webrtc_config.local_peer_id =
-            std::getenv("CAMERA_PEER_ID") ? std::getenv("CAMERA_PEER_ID") : "camera-cv-service";
-        webrtc_config.ice_servers = {"stun:stun.l.google.com:19302"};
-        webrtc_config.max_live_latency_ms = readEnvInt("CAMERA_MAX_LIVE_LATENCY_MS", 150);
-        webrtc_config.max_live_width = readEnvInt("CAMERA_MAX_LIVE_WIDTH", 1280);
-        webrtc_config.max_live_height = readEnvInt("CAMERA_MAX_LIVE_HEIGHT", 720);
-        webrtc_config.video_latency_sample_interval_ms =
-            readEnvInt("CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS", 1000);
-        webrtc_config.pipeline_metrics_interval_ms =
-            readEnvInt("CAMERA_PIPELINE_METRICS_INTERVAL_MS", 1000);
-        webrtc_config.max_detection_buffered_bytes =
-            static_cast<size_t>(readEnvInt("CAMERA_MAX_DETECTION_BUFFERED_BYTES", 128 * 1024));
-        webrtc_config.verbose_logging = readEnvBool("CAMERA_VERBOSE_LOGS", false);
-        webrtc_config.openh264_dll_path = resolveExistingPath("openh264-2.6.0-win64.dll").string();
-        if (const char* remote_peer_id = std::getenv("CAMERA_REMOTE_PEER_ID")) {
-            if (std::strlen(remote_peer_id) > 0) {
-                webrtc_config.remote_peer_id = std::string(remote_peer_id);
-            }
-        }
-        WebRTCService webrtc_service(std::move(webrtc_config));
+        WebRTCService webrtc_service(runtime_config.webrtc);
 
-        const int max_camera_scan = std::clamp(readEnvInt("CAMERA_MAX_CAMERA_SCAN", 10), 0, 64);
-        std::vector<std::string> camera_ids = detectConnectedCameras(camera_manager, max_camera_scan);
+        std::vector<std::string> camera_ids = detectConnectedCameras(
+            camera_manager,
+            *platform_services,
+            runtime_config.max_camera_scan);
 
         std::vector<std::string> video_files;
         if (!test_video_path.empty() && std::filesystem::is_regular_file(test_video_path)) {
@@ -301,12 +179,11 @@ int main() {
         inference_engine.start();
         webrtc_service.start();
         std::thread detection_thread(detectionPublishLoop, std::ref(inference_engine), std::ref(tracking_manager));
-        const int metrics_interval_ms = readEnvInt("CAMERA_PIPELINE_METRICS_INTERVAL_MS", 1000);
         std::thread metrics_thread(
             inferenceMetricsPublishLoop,
             std::ref(inference_engine),
             std::ref(webrtc_service),
-            metrics_interval_ms);
+            runtime_config.webrtc.pipeline_metrics_interval_ms);
 
         std::cout << "[INFO] Service started. Processing frames with WebRTC transport..." << std::endl;
 

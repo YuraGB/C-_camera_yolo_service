@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include "models/frame.h"
 #include "inference_engine.h"
+#include "capture/opencv_video_source.h"
 
 class CameraManager {
 public:
@@ -28,7 +29,7 @@ private:
     struct CameraInfo {
         std::string camera_id;
         std::string source;
-        cv::VideoCapture cap;
+        capture::OpenCvVideoSource source_handle;
         std::thread capture_thread;
         std::atomic<bool> running{false};
         std::deque<std::shared_ptr<Frame>> frame_queue;

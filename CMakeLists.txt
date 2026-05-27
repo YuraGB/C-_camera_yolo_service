@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "E:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
 endif()
 
@@ -10,15 +10,37 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(DEFAULT_ONNXRUNTIME_ROOT "E:/tools/onnxruntime1_18")
+if(WIN32)
+    set(DEFAULT_ONNXRUNTIME_ROOT "E:/tools/onnxruntime1_18")
+else()
+    set(DEFAULT_ONNXRUNTIME_ROOT "/opt/onnxruntime")
+endif()
+
 if(NOT DEFINED ONNXRUNTIME_ROOT OR ONNXRUNTIME_ROOT STREQUAL "")
     set(ONNXRUNTIME_ROOT "${DEFAULT_ONNXRUNTIME_ROOT}" CACHE PATH "ONNX Runtime root directory" FORCE)
 else()
     set(ONNXRUNTIME_ROOT "${ONNXRUNTIME_ROOT}" CACHE PATH "ONNX Runtime root directory")
 endif()
 set(ONNXRUNTIME_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/include")
-set(ONNXRUNTIME_LIBRARY "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
-set(ONNXRUNTIME_RUNTIME_DIR "${ONNXRUNTIME_ROOT}/lib")
+if(WIN32)
+    set(ONNXRUNTIME_LIBRARY "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
+    set(ONNXRUNTIME_RUNTIME_DIR "${ONNXRUNTIME_ROOT}/lib")
+else()
+    find_library(ONNXRUNTIME_LIBRARY
+        NAMES onnxruntime
+        PATHS
+            "${ONNXRUNTIME_ROOT}/lib"
+            "${ONNXRUNTIME_ROOT}/lib64"
+        NO_DEFAULT_PATH
+    )
+    if(NOT ONNXRUNTIME_LIBRARY)
+        find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime)
+    endif()
+    if(NOT ONNXRUNTIME_LIBRARY)
+        message(FATAL_ERROR "ONNX Runtime library was not found. Set ONNXRUNTIME_ROOT to a directory containing lib/libonnxruntime.so or lib64/libonnxruntime.so.")
+    endif()
+    get_filename_component(ONNXRUNTIME_RUNTIME_DIR "${ONNXRUNTIME_LIBRARY}" DIRECTORY)
+endif()
 set(OPENH264_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openh264-2.6.0/codec/api/wels")
 set(OPENH264_RUNTIME_DLL "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openh264-2.6.0-win64.dll")
 
@@ -32,6 +54,8 @@ find_package(Eigen3 CONFIG REQUIRED)
 
 add_executable(camera_cv_service
     src/main.cpp
+    src/core/pipeline/runtime_config.cpp
+    src/capture/opencv_video_source.cpp
     src/camera_manager.cpp
     src/inference_engine.cpp
     src/openh264_encoder.cpp
@@ -48,6 +72,14 @@ add_executable(camera_cv_service
     third_party/ByteTrack-cpp/src/lapjv.cpp
 )
 
+if(WIN32)
+    target_sources(camera_cv_service PRIVATE src/platform/windows/windows_platform_services.cpp)
+elseif(UNIX)
+    target_sources(camera_cv_service PRIVATE src/platform/linux/linux_platform_services.cpp)
+else()
+    message(FATAL_ERROR "Unsupported platform. Add a platform implementation under src/platform/<os>.")
+endif()
+
 set(BYTETRACK_SOURCES
     third_party/ByteTrack-cpp/src/BYTETracker.cpp
     third_party/ByteTrack-cpp/src/KalmanFilter.cpp
@@ -63,15 +95,20 @@ target_include_directories(camera_cv_service PRIVATE
     ${ONNXRUNTIME_INCLUDE_DIR}
     ${OPENH264_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ByteTrack-cpp/include
-    ${OpenCV_INCLUDE_DIRS}/opencv4
-    E:/tools/vcpkg/installed/x64-windows/include
+    ${OpenCV_INCLUDE_DIRS}
 )
 
+if(WIN32)
+    target_include_directories(camera_cv_service PRIVATE E:/tools/vcpkg/installed/x64-windows/include)
+endif()
+
 target_compile_definitions(camera_cv_service PRIVATE
-    NOMINMAX
-    WIN32_LEAN_AND_MEAN
     $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 )
+
+if(WIN32)
+    target_compile_definitions(camera_cv_service PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 if(MSVC)
     target_compile_options(camera_cv_service PRIVATE
@@ -119,38 +156,45 @@ target_link_libraries(camera_cv_service PRIVATE
     LibDataChannel::LibDataChannel
     Eigen3::Eigen
     ${ONNXRUNTIME_LIBRARY}
-    Version
 )
+
+if(WIN32)
+    target_link_libraries(camera_cv_service PRIVATE Version)
+elseif(UNIX)
+    target_link_libraries(camera_cv_service PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 set_target_properties(camera_cv_service PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
-set(ONNXRUNTIME_RUNTIME_DLLS
-    onnxruntime.dll
-    onnxruntime_providers_shared.dll
-    onnxruntime_providers_cuda.dll
-    onnxruntime_providers_tensorrt.dll
-)
+if(WIN32)
+    set(ONNXRUNTIME_RUNTIME_DLLS
+        onnxruntime.dll
+        onnxruntime_providers_shared.dll
+        onnxruntime_providers_cuda.dll
+        onnxruntime_providers_tensorrt.dll
+    )
 
-foreach(ORT_RUNTIME_DLL IN LISTS ONNXRUNTIME_RUNTIME_DLLS)
-    if(EXISTS "${ONNXRUNTIME_RUNTIME_DIR}/${ORT_RUNTIME_DLL}")
+    foreach(ORT_RUNTIME_DLL IN LISTS ONNXRUNTIME_RUNTIME_DLLS)
+        if(EXISTS "${ONNXRUNTIME_RUNTIME_DIR}/${ORT_RUNTIME_DLL}")
+            add_custom_command(TARGET camera_cv_service POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ONNXRUNTIME_RUNTIME_DIR}/${ORT_RUNTIME_DLL}"
+                    "$<TARGET_FILE_DIR:camera_cv_service>/${ORT_RUNTIME_DLL}"
+                COMMENT "Copying ${ORT_RUNTIME_DLL} to runtime output"
+            )
+        endif()
+    endforeach()
+
+    if(EXISTS "${OPENH264_RUNTIME_DLL}")
         add_custom_command(TARGET camera_cv_service POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ONNXRUNTIME_RUNTIME_DIR}/${ORT_RUNTIME_DLL}"
-                "$<TARGET_FILE_DIR:camera_cv_service>/${ORT_RUNTIME_DLL}"
-            COMMENT "Copying ${ORT_RUNTIME_DLL} to runtime output"
+                "${OPENH264_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:camera_cv_service>/openh264-2.6.0-win64.dll"
+            COMMENT "Copying OpenH264 runtime DLL to runtime output"
         )
     endif()
-endforeach()
-
-if(EXISTS "${OPENH264_RUNTIME_DLL}")
-    add_custom_command(TARGET camera_cv_service POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${OPENH264_RUNTIME_DLL}"
-            "$<TARGET_FILE_DIR:camera_cv_service>/openh264-2.6.0-win64.dll"
-        COMMENT "Copying OpenH264 runtime DLL to runtime output"
-    )
 endif()
 
 message(STATUS "OpenCV include dirs: ${OpenCV_INCLUDE_DIRS}")

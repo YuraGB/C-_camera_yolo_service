@@ -6,10 +6,14 @@
 #include <cstdlib>
 #include <stdexcept>
 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #ifdef max
 #undef max
@@ -24,6 +28,43 @@ namespace {
 constexpr int kTargetBitrateBps = 2'500'000;
 constexpr double kMinTargetFps = 5.0;
 constexpr double kMaxTargetFps = 60.0;
+
+void* loadDynamicLibrary(const std::string& path) {
+#ifdef _WIN32
+  return LoadLibraryA(path.c_str());
+#else
+  return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+#endif
+}
+
+void* loadSymbol(void* handle, const char* name) {
+#ifdef _WIN32
+  return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(handle), name));
+#else
+  return dlsym(handle, name);
+#endif
+}
+
+void closeDynamicLibrary(void* handle) {
+  if (!handle) {
+    return;
+  }
+
+#ifdef _WIN32
+  FreeLibrary(static_cast<HMODULE>(handle));
+#else
+  dlclose(handle);
+#endif
+}
+
+std::string dynamicLibraryError() {
+#ifdef _WIN32
+  return {};
+#else
+  const char* error = dlerror();
+  return error ? std::string(error) : std::string();
+#endif
+}
 
 int readEnvInt(const char* name, int fallback) {
   if (const char* raw = std::getenv(name)) {
@@ -68,7 +109,7 @@ OpenH264Encoder::~OpenH264Encoder() {
   }
 
   if (dll_handle_) {
-    FreeLibrary(static_cast<HMODULE>(dll_handle_));
+    closeDynamicLibrary(dll_handle_);
     dll_handle_ = nullptr;
   }
 }
@@ -130,18 +171,20 @@ std::vector<uint8_t> OpenH264Encoder::encode(const cv::Mat& bgr_frame, int64_t t
 }
 
 void OpenH264Encoder::loadLibrary() {
-  dll_handle_ = LoadLibraryA(dll_path_.c_str());
+  dll_handle_ = loadDynamicLibrary(dll_path_);
   if (!dll_handle_) {
-    throw std::runtime_error("Failed to load OpenH264 DLL: " + dll_path_);
+    const std::string error = dynamicLibraryError();
+    throw std::runtime_error(
+        "Failed to load OpenH264 library: " + dll_path_ + (error.empty() ? "" : " (" + error + ")"));
   }
 
   create_encoder_ =
-      reinterpret_cast<CreateEncoderFn>(GetProcAddress(static_cast<HMODULE>(dll_handle_), "WelsCreateSVCEncoder"));
+      reinterpret_cast<CreateEncoderFn>(loadSymbol(dll_handle_, "WelsCreateSVCEncoder"));
   destroy_encoder_ =
-      reinterpret_cast<DestroyEncoderFn>(GetProcAddress(static_cast<HMODULE>(dll_handle_), "WelsDestroySVCEncoder"));
+      reinterpret_cast<DestroyEncoderFn>(loadSymbol(dll_handle_, "WelsDestroySVCEncoder"));
 
   if (!create_encoder_ || !destroy_encoder_) {
-    throw std::runtime_error("OpenH264 DLL is missing required encoder exports");
+    throw std::runtime_error("OpenH264 library is missing required encoder exports");
   }
 }
 

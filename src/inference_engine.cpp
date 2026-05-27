@@ -19,6 +19,8 @@
 #ifdef min
 #undef min
 #endif
+#else
+#include <dlfcn.h>
 #endif
 
 #if defined(__has_include)
@@ -174,6 +176,44 @@ bool appendProviderBySymbol(HMODULE ort_module,
     Ort::GetApi().ReleaseStatus(status);
     return false;
 }
+#elif defined(__linux__)
+using AppendExecutionProviderDeviceFn = OrtStatus*(ORT_API_CALL*)(OrtSessionOptions*, int);
+
+void* openOnnxRuntimeModule() {
+    void* module = dlopen("libonnxruntime.so", RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
+    if (!module) {
+        module = dlopen("libonnxruntime.so.1", RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
+    }
+    return module;
+}
+
+bool appendProviderBySymbol(void* ort_module,
+                            const char* symbol_name,
+                            OrtSessionOptions* session_options,
+                            int device_id,
+                            std::string& error_message) {
+    if (!ort_module) {
+        error_message = "libonnxruntime.so is not loaded";
+        return false;
+    }
+
+    auto append_fn = reinterpret_cast<AppendExecutionProviderDeviceFn>(
+        dlsym(ort_module, symbol_name)
+    );
+    if (!append_fn) {
+        error_message = std::string(symbol_name) + " export is not available";
+        return false;
+    }
+
+    OrtStatus* status = append_fn(session_options, device_id);
+    if (!status) {
+        return true;
+    }
+
+    error_message = Ort::GetApi().GetErrorMessage(status);
+    Ort::GetApi().ReleaseStatus(status);
+    return false;
+}
 #endif
 
 void logProviders(const std::vector<std::string>& providers) {
@@ -227,13 +267,17 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
     configureExecutionProvider();
 
     std::filesystem::path path_fs(model_path);
-    std::wstring wmodel_path = path_fs.wstring();
+#ifdef _WIN32
+    std::wstring ort_model_path = path_fs.wstring();
+#else
+    std::string ort_model_path = path_fs.string();
+#endif
 
     try {
         std::cout << "[ONNX] Creating session with provider preference: "
                   << selected_execution_provider_ << std::endl;
 
-        session_ = std::make_unique<Ort::Session>(env_, wmodel_path.c_str(), session_options_);
+        session_ = std::make_unique<Ort::Session>(env_, ort_model_path.c_str(), session_options_);
         std::cout << "[ONNX] Session created successfully with provider preference: "
                   << selected_execution_provider_ << std::endl;
 
@@ -271,7 +315,7 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
                 Ort::SessionOptions cpu_session_options;
                 configureBaseOptions(cpu_session_options);
                 selected_execution_provider_ = "CPUExecutionProvider";
-                session_ = std::make_unique<Ort::Session>(env_, wmodel_path.c_str(), cpu_session_options);
+                session_ = std::make_unique<Ort::Session>(env_, ort_model_path.c_str(), cpu_session_options);
                 std::cout << "[ONNX] Session created successfully with CPUExecutionProvider fallback" << std::endl;
 
                 Ort::AllocatorWithDefaultOptions allocator;
@@ -329,6 +373,11 @@ void InferenceEngine::configureExecutionProvider() {
     if (!ort_module) {
         std::cout << "[ONNX] onnxruntime.dll module is not currently loaded during provider configuration" << std::endl;
     }
+#elif defined(__linux__)
+    void* ort_module = openOnnxRuntimeModule();
+    if (!ort_module) {
+        std::cout << "[ONNX] libonnxruntime.so module is not currently loaded during provider configuration" << std::endl;
+    }
 #endif
 
 #if defined(HAS_ORT_CUDA_PROVIDER)
@@ -351,7 +400,7 @@ void InferenceEngine::configureExecutionProvider() {
     }
 #endif
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     if (!gpu_enabled && hasProvider(providers, "CUDAExecutionProvider")) {
         std::string error_message;
         std::cout << "[ONNX] Attempting to enable CUDAExecutionProvider via runtime symbol lookup" << std::endl;
@@ -368,6 +417,12 @@ void InferenceEngine::configureExecutionProvider() {
             std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider via runtime symbol lookup: "
                       << error_message << std::endl;
         }
+    }
+#endif
+
+#if defined(__linux__)
+    if (ort_module) {
+        dlclose(ort_module);
     }
 #endif
 

@@ -198,12 +198,40 @@ The service can either:
 
 ## Runtime Configuration
 
-Main runtime configuration lives in [webrtc_service.h](/E:/Progects/test/camera_cv_service/include/webrtc_service.h) and [main.cpp](/E:/Progects/test/camera_cv_service/src/main.cpp).
+Main runtime configuration lives in [runtime_config.h](/E:/Progects/test/camera_cv_service/include/core/pipeline/runtime_config.h) and [webrtc_service.h](/E:/Progects/test/camera_cv_service/include/webrtc_service.h).
+
+## Source Layout
+
+The service now has a platform boundary around OS-specific behavior:
+
+```text
+include/core/yolo/          compatibility entrypoint for YOLO inference
+include/core/tracking/      compatibility entrypoint for tracking
+include/core/pipeline/      runtime configuration and pipeline-level orchestration
+include/platform/           cross-platform service contracts
+include/platform/windows/   Windows implementation
+include/platform/linux/     Linux implementation
+include/capture/            capture-source abstraction
+include/streaming/          streaming entrypoint
+src/platform/windows/       Windows camera/path implementation
+src/platform/linux/         Linux camera/path implementation
+src/capture/                OpenCV-backed capture source
+```
+
+The current concrete platform API covers:
+
+- executable/source-root path discovery
+- camera index enumeration
+- default signaling URL
+- default OpenH264 runtime library name
+
+Windows probes cameras through OpenCV with DirectShow first. Linux probes `/dev/video*` and verifies devices through OpenCV/V4L2.
 
 Local configuration templates:
 
 - `.env.example` is safe to commit
 - `.env` is local-only and ignored by git
+- large runtime assets are documented in [ASSETS.md](/E:/Progects/test/camera_cv_service/ASSETS.md)
 
 The executable reads environment variables from the process environment. In PowerShell, load `.env` before running:
 
@@ -215,6 +243,18 @@ Get-Content .env | ForEach-Object {
   }
 }
 .\build\bin\Release\camera_cv_service.exe
+```
+
+Prepare local assets after cloning:
+
+```powershell
+.\scripts\prepare-assets.ps1
+```
+
+On Linux:
+
+```bash
+bash scripts/prepare-assets.sh
 ```
 
 Useful environment variables:
@@ -230,6 +270,7 @@ Useful environment variables:
 - `CAMERA_CONF_THRESHOLD`
 - `CAMERA_IOU_THRESHOLD`
 - `CAMERA_H264_BITRATE_BPS`
+- `CAMERA_OPENH264_LIBRARY`
 - `CAMERA_MAX_LIVE_LATENCY_MS`
 - `CAMERA_MAX_LIVE_WIDTH`
 - `CAMERA_MAX_LIVE_HEIGHT`
@@ -245,6 +286,9 @@ Defaults:
 - ICE server: `stun:stun.l.google.com:19302`
 - inference size: `640x640`
 - H264 bitrate: `2500000`
+- OpenH264 library:
+  - Windows: `openh264-2.6.0-win64.dll`
+  - Linux: `libopenh264.so.2`
 - max live latency: `150ms`
 - live-video latency sample interval: `1000ms`
 - pipeline metrics interval: `1000ms`
@@ -255,10 +299,10 @@ Defaults:
 - OpenCV
 - ONNX Runtime 1.18
 - libdatachannel
-- OpenH264 runtime DLL
+- OpenH264 runtime library
 - vcpkg
 
-## Build
+## Build On Windows
 
 ```powershell
 cd E:\Progects\test\camera_cv_service
@@ -272,11 +316,87 @@ Binary:
 build/bin/Release/camera_cv_service.exe
 ```
 
+## Build On Linux
+
+Install OpenCV, libdatachannel, Eigen3, OpenH264, and ONNX Runtime for your distro or CI image. Configure `ONNXRUNTIME_ROOT` when ONNX Runtime is not installed under `/opt/onnxruntime`.
+
+```bash
+cd /path/to/camera_cv_service
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DONNXRUNTIME_ROOT=/opt/onnxruntime
+cmake --build build --config Release
+```
+
+Linux runtime notes:
+
+- OpenH264 is loaded dynamically with `dlopen`
+- default OpenH264 library is `libopenh264.so.2`
+- override with `CAMERA_OPENH264_LIBRARY=/absolute/path/to/libopenh264.so.2` when needed
+- camera discovery scans `/dev/video*` and validates indices with V4L2/OpenCV
+
+## Docker On Linux
+
+The root [Dockerfile](/E:/Progects/test/camera_cv_service/Dockerfile) builds a Linux runtime image with:
+
+- Ubuntu 24.04 base
+- ONNX Runtime under `/opt/onnxruntime`
+- OpenH264 built as a Linux shared library from `third_party/openh264-2.6.0`
+- libdatachannel built from source
+- non-root `camera` user
+- default model mount path `/models/yolov8x.onnx`
+
+Build the default GPU-capable image:
+
+```bash
+docker build -t camera-cv-service:linux .
+```
+
+Build a CPU-only image:
+
+```bash
+docker build \
+  --build-arg ONNXRUNTIME_FLAVOR=cpu \
+  -t camera-cv-service:linux-cpu .
+```
+
+Run with a USB/V4L2 camera and host networking:
+
+```bash
+docker run --rm -it \
+  --network host \
+  --device /dev/video0:/dev/video0 \
+  --group-add video \
+  -v /absolute/path/to/models:/models:ro \
+  -e CAMERA_SIGNALING_URL=ws://127.0.0.1:3001/ws \
+  camera-cv-service:linux
+```
+
+Run with NVIDIA GPU access:
+
+```bash
+docker run --rm -it \
+  --network host \
+  --gpus all \
+  --device /dev/video0:/dev/video0 \
+  --group-add video \
+  -v /absolute/path/to/models:/models:ro \
+  -e CAMERA_SIGNALING_URL=ws://127.0.0.1:3001/ws \
+  camera-cv-service:linux
+```
+
+Container notes:
+
+- use `--network host` when the signaling server is also on the Linux host
+- mount large models and test videos instead of baking them into the image
+- the GPU image still falls back to CPU if CUDA provider initialization fails
+- set `CAMERA_TEST_VIDEO_PATH=/media/<file>` and mount `-v /path/to/media:/media:ro` for file playback
+
 ## Runtime Notes
 
 - the executable expects `models/yolov8x.onnx`
-- an optional `test_video.mp4` beside the executable is used automatically when present
+- an optional `media/test_video.mp4` is used automatically when present
+- legacy `test_video.mp4` beside the executable is still checked as a fallback
 - `openh264-2.6.0-win64.dll` is copied into the runtime output during the build
+- on Linux, OpenH264 is expected to be available through the system loader or `CAMERA_OPENH264_LIBRARY`
 - ONNX Runtime 1.18 GPU loading still depends on a matching CUDA/cuDNN runtime on the machine
 - GPU execution is attempted first when CUDA is available; CPU remains the fallback
 

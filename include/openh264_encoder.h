@@ -9,6 +9,10 @@
 
 class ISVCEncoder;
 
+#if !defined(_WIN32) && !defined(__cdecl)
+#define __cdecl
+#endif
+
 class OpenH264Encoder {
  public:
   explicit OpenH264Encoder(const std::string& dll_path);
