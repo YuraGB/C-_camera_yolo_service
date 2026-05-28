@@ -117,8 +117,12 @@ RuntimeConfig loadRuntimeConfig(const platform::PlatformServices& platform_servi
       readEnvInt("CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS", 1000);
   config.webrtc.pipeline_metrics_interval_ms =
       readEnvInt("CAMERA_PIPELINE_METRICS_INTERVAL_MS", 1000);
+  const int detection_buffer_bytes = std::clamp(
+      readEnvInt("CAMERA_MAX_DETECTION_BUFFERED_BYTES", 128 * 1024),
+      0,
+      8 * 1024 * 1024);
   config.webrtc.max_detection_buffered_bytes =
-      static_cast<size_t>(readEnvInt("CAMERA_MAX_DETECTION_BUFFERED_BYTES", 128 * 1024));
+      static_cast<size_t>(detection_buffer_bytes);
   config.webrtc.verbose_logging = readEnvBool("CAMERA_VERBOSE_LOGS", false);
 
   const std::string openh264_library = readEnvString(
