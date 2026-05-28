@@ -15,6 +15,7 @@
 
 #include <nlohmann/json.hpp>
 #include <rtc/rtc.hpp>
+#include <rtc/rtppacketizationconfig.hpp>
 
 #include "frame.h"
 #include "openh264_encoder.h"
@@ -24,7 +25,6 @@ struct WebRTCServiceConfig {
   std::string local_peer_id;
   std::optional<std::string> remote_peer_id;
   std::vector<std::string> ice_servers;
-  std::string live_track_label = "liveStream";
   std::string detection_channel_label = "detectionStream";
   size_t max_detection_buffered_bytes = 128 * 1024;
   int max_live_latency_ms = 150;
@@ -86,7 +86,7 @@ class WebRTCService {
     std::string peer_id;
     std::shared_ptr<rtc::PeerConnection> peer_connection;
     std::unordered_map<std::string, std::shared_ptr<rtc::Track>> video_tracks;
-    std::unordered_map<std::string, uint32_t> video_ssrcs;
+    std::unordered_map<std::string, std::shared_ptr<rtc::RtpPacketizationConfig>> video_rtp_configs;
     std::shared_ptr<rtc::DataChannel> detection_channel;
     std::atomic<bool> configured{false};
   };

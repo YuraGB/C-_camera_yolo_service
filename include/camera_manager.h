@@ -7,15 +7,13 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
-#include <condition_variable>
 #include <unordered_map>
 #include "models/frame.h"
-#include "inference_engine.h"
 #include "capture/opencv_video_source.h"
 
 class CameraManager {
 public:
-    explicit CameraManager(InferenceEngine* engine);
+    CameraManager();
     ~CameraManager();
 
     // Публічні методи
@@ -34,7 +32,6 @@ private:
         std::atomic<bool> running{false};
         std::deque<std::shared_ptr<Frame>> frame_queue;
         std::mutex queue_mutex;
-        std::condition_variable queue_cv;
         bool is_file_source = false;
         double source_fps = 0.0;
         int64_t first_source_timestamp_ms = -1;
@@ -45,7 +42,6 @@ private:
             : camera_id(id), source(src) {}
     };
 
-    InferenceEngine* inferenceEngine_ = nullptr;
     std::unordered_map<std::string, std::unique_ptr<CameraInfo>> cameras_;
     std::mutex cameras_mutex_;
 

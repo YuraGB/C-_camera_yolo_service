@@ -1,0 +1,11 @@
+services:
+  camera-cv:
+    build:
+      args:
+        ONNXRUNTIME_FLAVOR: "gpu"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]

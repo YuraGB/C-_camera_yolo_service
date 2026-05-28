@@ -144,7 +144,7 @@ int main() {
             return 1;
         }
 
-        CameraManager camera_manager(&inference_engine);
+        CameraManager camera_manager;
         TrackingManager tracking_manager;
         WebRTCService webrtc_service(runtime_config.webrtc);
 

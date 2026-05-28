@@ -205,14 +205,11 @@ Main runtime configuration lives in [runtime_config.h](/E:/Progects/test/camera_
 The service now has a platform boundary around OS-specific behavior:
 
 ```text
-include/core/yolo/          compatibility entrypoint for YOLO inference
-include/core/tracking/      compatibility entrypoint for tracking
 include/core/pipeline/      runtime configuration and pipeline-level orchestration
 include/platform/           cross-platform service contracts
 include/platform/windows/   Windows implementation
 include/platform/linux/     Linux implementation
 include/capture/            capture-source abstraction
-include/streaming/          streaming entrypoint
 src/platform/windows/       Windows camera/path implementation
 src/platform/linux/         Linux camera/path implementation
 src/capture/                OpenCV-backed capture source
@@ -329,8 +326,8 @@ cmake --build build --config Release
 Linux runtime notes:
 
 - OpenH264 is loaded dynamically with `dlopen`
-- default OpenH264 library is `libopenh264.so.2`
-- override with `CAMERA_OPENH264_LIBRARY=/absolute/path/to/libopenh264.so.2` when needed
+- default OpenH264 library is `libopenh264.so.7` in the Docker image
+- override with `CAMERA_OPENH264_LIBRARY=/absolute/path/to/libopenh264.so.7` when needed
 - camera discovery scans `/dev/video*` and validates indices with V4L2/OpenCV
 
 ## Docker On Linux
@@ -339,23 +336,22 @@ The root [Dockerfile](/E:/Progects/test/camera_cv_service/Dockerfile) builds a L
 
 - Ubuntu 24.04 base
 - ONNX Runtime under `/opt/onnxruntime`
-- OpenH264 built as a Linux shared library from `third_party/openh264-2.6.0`
+- OpenH264 built as a Linux shared library
 - libdatachannel built from source
-- non-root `camera` user
 - default model mount path `/models/yolov8x.onnx`
 
-Build the default GPU-capable image:
+Build and run the default CPU image with Compose:
 
 ```bash
-docker build -t camera-cv-service:linux .
+docker compose build
+docker compose up
 ```
 
-Build a CPU-only image:
+GPU support is opt-in. Use the GPU override only on hosts with a working NVIDIA Docker runtime:
 
 ```bash
-docker build \
-  --build-arg ONNXRUNTIME_FLAVOR=cpu \
-  -t camera-cv-service:linux-cpu .
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml build
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
 ```
 
 Run with a USB/V4L2 camera and host networking:
@@ -367,7 +363,7 @@ docker run --rm -it \
   --group-add video \
   -v /absolute/path/to/models:/models:ro \
   -e CAMERA_SIGNALING_URL=ws://127.0.0.1:3001/ws \
-  camera-cv-service:linux
+  camera-cv-service:latest
 ```
 
 Run with NVIDIA GPU access:
@@ -380,14 +376,15 @@ docker run --rm -it \
   --group-add video \
   -v /absolute/path/to/models:/models:ro \
   -e CAMERA_SIGNALING_URL=ws://127.0.0.1:3001/ws \
-  camera-cv-service:linux
+  camera-cv-service:latest
 ```
 
 Container notes:
 
 - use `--network host` when the signaling server is also on the Linux host
 - mount large models and test videos instead of baking them into the image
-- the GPU image still falls back to CPU if CUDA provider initialization fails
+- the default Compose file does not request GPU, so hosts without GPU run on CPU
+- the GPU override requires Docker to discover a supported GPU before the container starts
 - set `CAMERA_TEST_VIDEO_PATH=/media/<file>` and mount `-v /path/to/media:/media:ro` for file playback
 
 ## Runtime Notes

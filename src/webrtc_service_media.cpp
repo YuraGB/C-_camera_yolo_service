@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include <nlohmann/json.hpp>
+#include <rtc/h264rtppacketizer.hpp>
 
 #include "webrtc_service_internal.h"
 
@@ -336,22 +337,32 @@ void WebRTCService::encodeAndBroadcastVideo(
   }
 
   const double seconds = toRelativeSeconds(first_live_timestamp_ms, frame->timestamp);
-  rtc::FrameInfo info{std::chrono::duration<double>(seconds)};
+  const uint32_t rtp_timestamp = rtc::RtpPacketizationConfig::getTimestampFromSeconds(
+      seconds, rtc::H264RtpPacketizer::defaultClockRate);
 
-  std::vector<std::shared_ptr<rtc::Track>> tracks;
+  struct TrackSender {
+    std::shared_ptr<rtc::Track> track;
+    std::shared_ptr<rtc::RtpPacketizationConfig> rtp_config;
+  };
+
+  std::vector<TrackSender> tracks;
   {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
     for (const auto& [_, session] : sessions_) {
       auto it = session->video_tracks.find(source_state->camera_id);
       if (it != session->video_tracks.end() && it->second && it->second->isOpen()) {
-        tracks.push_back(it->second);
+        auto config_it = session->video_rtp_configs.find(source_state->camera_id);
+        if (config_it != session->video_rtp_configs.end() && config_it->second) {
+          tracks.push_back({it->second, config_it->second});
+        }
       }
     }
   }
 
-  for (const auto& track : tracks) {
-    track->sendFrame(reinterpret_cast<const rtc::byte*>(bitstream.data()),
-                     bitstream.size(), info);
+  for (const auto& sender : tracks) {
+    sender.rtp_config->timestamp = rtp_timestamp;
+    sender.track->send(reinterpret_cast<const rtc::byte*>(bitstream.data()),
+                       bitstream.size());
   }
 
   maybeSendVideoLatencySample(source_state, frame, currentTimestampMs());

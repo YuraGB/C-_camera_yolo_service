@@ -24,7 +24,6 @@ bool isNumericSource(const std::string& source) {
 }
 
 bool OpenCvVideoSource::open(const std::string& source) {
-  source_ = source;
   is_file_source_ = !isNumericSource(source);
 
   if (isNumericSource(source)) {
@@ -51,10 +50,6 @@ void OpenCvVideoSource::release() {
   capture_.release();
 }
 
-bool OpenCvVideoSource::isOpened() const {
-  return capture_.isOpened();
-}
-
 bool OpenCvVideoSource::isFileSource() const {
   return is_file_source_;
 }
@@ -65,10 +60,6 @@ double OpenCvVideoSource::fps() const {
 
 double OpenCvVideoSource::positionMs() const {
   return capture_.get(cv::CAP_PROP_POS_MSEC);
-}
-
-std::string OpenCvVideoSource::source() const {
-  return source_;
 }
 
 }  // namespace capture

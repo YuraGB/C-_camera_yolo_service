@@ -37,7 +37,6 @@ public:
 
     cv::Mat mat;
     std::vector<Detection> detections;
-    std::vector<unsigned char> jpeg;
 
     Frame() = default;
 
@@ -49,14 +48,4 @@ public:
 
     int width() const { return mat.cols; }
     int height() const { return mat.rows; }
-    int channels() const { return mat.channels(); }
-
-    void encodeJPEG(int quality = 90) {
-        if (mat.empty()) {
-            return;
-        }
-
-        std::vector<int> params = {cv::IMWRITE_JPEG_QUALITY, quality};
-        cv::imencode(".jpg", mat, jpeg, params);
-    }
 };

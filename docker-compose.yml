@@ -1,0 +1,40 @@
+services:
+  camera-cv:
+    container_name: camera_cv_service
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UBUNTU_VERSION: "24.04"
+        ONNXRUNTIME_VERSION: "1.18.1"
+        ONNXRUNTIME_FLAVOR: "cpu"
+        LIBDATACHANNEL_VERSION: "v0.22.5"
+
+    image: camera-cv-service:latest
+
+    privileged: true
+
+    devices:
+      - "/dev/video0:/dev/video0"
+
+    group_add:
+      - video
+
+    restart: unless-stopped
+
+    environment:
+      - LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/openh264/lib:/usr/local/lib
+      - CAMERA_MODEL_PATH=/models/yolo26x.onnx
+      - CAMERA_TEST_VIDEO_PATH=/media/test_video.mp4
+      - CAMERA_VERBOSE_LOGS=false
+
+    volumes:
+      - ./models:/models
+      - ./media:/media
+      - /dev/v4l:/dev/v4l:ro
+
+    shm_size: "1gb"
+
+    tty: true
+    stdin_open: true

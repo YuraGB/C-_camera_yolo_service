@@ -3,7 +3,6 @@
 #include <chrono>
 #include <thread>
 #include <opencv2/opencv.hpp>
-#include "capture/video_source.h"
 
 namespace {
 int64_t currentWallClockMs() {
@@ -13,8 +12,7 @@ int64_t currentWallClockMs() {
 
 }  // namespace
 
-CameraManager::CameraManager(InferenceEngine* engine)
-    : inferenceEngine_(engine) {}
+CameraManager::CameraManager() = default;
 
 CameraManager::~CameraManager() {
     stopAllCameras();
@@ -185,7 +183,6 @@ void CameraManager::enqueueFrame(std::shared_ptr<Frame> frame, CameraInfo& cam) 
     if (cam.frame_queue.size() >= MAX_QUEUE)
         cam.frame_queue.pop_front();
     cam.frame_queue.push_back(frame);
-    cam.queue_cv.notify_one();
 }
 
 std::shared_ptr<Frame> CameraManager::dequeueFrame(CameraInfo& cam) {

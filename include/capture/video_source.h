@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
 
 #include <opencv2/opencv.hpp>
@@ -15,11 +14,9 @@ class VideoSource {
   virtual bool read(cv::Mat& frame) = 0;
   virtual bool grab() = 0;
   virtual void release() = 0;
-  virtual bool isOpened() const = 0;
   virtual bool isFileSource() const = 0;
   virtual double fps() const = 0;
   virtual double positionMs() const = 0;
-  virtual std::string source() const = 0;
 };
 
 bool isNumericSource(const std::string& source);
