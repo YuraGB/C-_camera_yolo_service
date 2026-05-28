@@ -109,6 +109,15 @@ RuntimeConfig loadRuntimeConfig(const platform::PlatformServices& platform_servi
   config.webrtc.signaling_url = readEnvString("CAMERA_SIGNALING_URL", platform_services.defaultSignalingUrl());
   config.webrtc.local_peer_id = readEnvString("CAMERA_PEER_ID", "camera-cv-service");
   config.webrtc.remote_peer_id = readOptionalEnvString("CAMERA_REMOTE_PEER_ID");
+  config.webrtc.auth_jwt_secret = readEnvString("CAMERA_AUTH_JWT_SECRET", "");
+  config.webrtc.auth_jwt_issuer = readEnvString("CAMERA_AUTH_JWT_ISSUER", "cam_frontend");
+  config.webrtc.auth_jwt_audience = readEnvString("CAMERA_AUTH_JWT_AUDIENCE", "cam_serv");
+  config.webrtc.auth_jwt_role = readEnvString("CAMERA_AUTH_JWT_ROLE", "service");
+  config.webrtc.auth_jwt_email = readOptionalEnvString("CAMERA_AUTH_JWT_EMAIL");
+  config.webrtc.auth_jwt_ttl_seconds = std::clamp(
+      readEnvInt("CAMERA_AUTH_JWT_TTL_SECONDS", 300),
+      30,
+      24 * 60 * 60);
   config.webrtc.ice_servers = {"stun:stun.l.google.com:19302"};
   config.webrtc.max_live_latency_ms = readEnvInt("CAMERA_MAX_LIVE_LATENCY_MS", 150);
   config.webrtc.max_live_width = readEnvInt("CAMERA_MAX_LIVE_WIDTH", 1280);

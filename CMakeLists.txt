@@ -66,6 +66,7 @@ find_package(OpenCV REQUIRED)
 find_package(Threads REQUIRED)
 find_package(LibDataChannel CONFIG REQUIRED)
 find_package(Eigen3 CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # =========================
 # BYTE TRACK
@@ -173,6 +174,7 @@ target_link_libraries(camera_cv_service PRIVATE
     Threads::Threads
     LibDataChannel::LibDataChannel
     Eigen3::Eigen
+    OpenSSL::Crypto
     ${ONNXRUNTIME_LIBRARY}
 )
 

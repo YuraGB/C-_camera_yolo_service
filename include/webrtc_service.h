@@ -33,6 +33,12 @@ struct WebRTCServiceConfig {
   int video_latency_sample_interval_ms = 1000;
   int pipeline_metrics_interval_ms = 1000;
   std::string openh264_dll_path = "third_party/openh264-2.6.0-win64.dll";
+  std::string auth_jwt_secret;
+  std::string auth_jwt_issuer = "cam_frontend";
+  std::string auth_jwt_audience = "cam_serv";
+  std::string auth_jwt_role = "service";
+  std::optional<std::string> auth_jwt_email;
+  int auth_jwt_ttl_seconds = 300;
   bool verbose_logging = false;
 };
 

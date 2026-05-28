@@ -55,7 +55,7 @@ class WindowsPlatformServices final : public PlatformServices {
   }
 
   std::string defaultSignalingUrl() const override {
-    return "ws://127.0.0.1:3001/ws";
+    return "ws://127.0.0.1:3002/ws";
   }
 
   std::string defaultOpenH264LibraryName() const override {

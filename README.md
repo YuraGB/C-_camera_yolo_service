@@ -242,6 +242,8 @@ Get-Content .env | ForEach-Object {
 .\build\bin\Release\camera_cv_service.exe
 ```
 
+When connecting to `server_for_cam_det`, set `CAMERA_AUTH_JWT_SECRET` to the same strong secret as the server's `AUTH_JWT_SECRET`. If the secret is set, the C++ service signs a short-lived HS256 JWT and sends it to the signaling server as the WebSocket `access_token` query parameter.
+
 Prepare local assets after cloning:
 
 ```powershell
@@ -261,6 +263,12 @@ Useful environment variables:
 - `CAMERA_SIGNALING_URL`
 - `CAMERA_PEER_ID`
 - `CAMERA_REMOTE_PEER_ID`
+- `CAMERA_AUTH_JWT_SECRET`
+- `CAMERA_AUTH_JWT_ISSUER`
+- `CAMERA_AUTH_JWT_AUDIENCE`
+- `CAMERA_AUTH_JWT_ROLE`
+- `CAMERA_AUTH_JWT_EMAIL`
+- `CAMERA_AUTH_JWT_TTL_SECONDS`
 - `CAMERA_MAX_CAMERA_SCAN`
 - `CAMERA_INFERENCE_WIDTH`
 - `CAMERA_INFERENCE_HEIGHT`
@@ -278,8 +286,10 @@ Useful environment variables:
 
 Defaults:
 
-- signaling URL: `ws://127.0.0.1:3001/ws`
+- signaling URL: `ws://127.0.0.1:3002/ws`
 - local peer id: `camera-cv-service`
+- JWT issuer/audience: `cam_frontend` / `cam_serv`
+- JWT TTL: `300s`
 - ICE server: `stun:stun.l.google.com:19302`
 - inference size: `640x640`
 - H264 bitrate: `2500000`
@@ -296,6 +306,7 @@ Defaults:
 - OpenCV
 - ONNX Runtime 1.18
 - libdatachannel
+- OpenSSL
 - OpenH264 runtime library
 - vcpkg
 
@@ -315,7 +326,7 @@ build/bin/Release/camera_cv_service.exe
 
 ## Build On Linux
 
-Install OpenCV, libdatachannel, Eigen3, OpenH264, and ONNX Runtime for your distro or CI image. Configure `ONNXRUNTIME_ROOT` when ONNX Runtime is not installed under `/opt/onnxruntime`.
+Install OpenCV, libdatachannel, Eigen3, OpenSSL, OpenH264, and ONNX Runtime for your distro or CI image. Configure `ONNXRUNTIME_ROOT` when ONNX Runtime is not installed under `/opt/onnxruntime`.
 
 ```bash
 cd /path/to/camera_cv_service
@@ -362,7 +373,8 @@ docker run --rm -it \
   --device /dev/video0:/dev/video0 \
   --group-add video \
   -v /absolute/path/to/models:/models:ro \
-  -e CAMERA_SIGNALING_URL=ws://127.0.0.1:3001/ws \
+  -e CAMERA_SIGNALING_URL=ws://127.0.0.1:3002/ws \
+  -e CAMERA_AUTH_JWT_SECRET="$AUTH_JWT_SECRET" \
   camera-cv-service:latest
 ```
 
@@ -375,7 +387,8 @@ docker run --rm -it \
   --device /dev/video0:/dev/video0 \
   --group-add video \
   -v /absolute/path/to/models:/models:ro \
-  -e CAMERA_SIGNALING_URL=ws://127.0.0.1:3001/ws \
+  -e CAMERA_SIGNALING_URL=ws://127.0.0.1:3002/ws \
+  -e CAMERA_AUTH_JWT_SECRET="$AUTH_JWT_SECRET" \
   camera-cv-service:latest
 ```
 

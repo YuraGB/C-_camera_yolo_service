@@ -27,6 +27,8 @@ services:
       - LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/openh264/lib:/usr/local/lib
       - CAMERA_MODEL_PATH=/models/yolo26x.onnx
       - CAMERA_TEST_VIDEO_PATH=/media/test_video.mp4
+      - CAMERA_SIGNALING_URL=ws://127.0.0.1:3002/ws
+      - CAMERA_AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
       - CAMERA_VERBOSE_LOGS=false
 
     volumes:

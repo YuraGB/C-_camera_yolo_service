@@ -1,14 +1,122 @@
 #include "webrtc_service.h"
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
 
 #include <nlohmann/json.hpp>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 
 #include "webrtc_service_internal.h"
 
 using namespace webrtc_service_internal;
+
+namespace {
+
+std::string base64UrlEncode(const unsigned char* data, size_t size) {
+  if (size == 0) {
+    return {};
+  }
+
+  const int encoded_size = 4 * static_cast<int>((size + 2) / 3);
+  std::string encoded(static_cast<size_t>(encoded_size), '\0');
+  const int actual_size = EVP_EncodeBlock(
+      reinterpret_cast<unsigned char*>(encoded.data()),
+      data,
+      static_cast<int>(size));
+  if (actual_size < 0) {
+    throw std::runtime_error("Failed to base64url encode JWT data");
+  }
+
+  encoded.resize(static_cast<size_t>(actual_size));
+  std::replace(encoded.begin(), encoded.end(), '+', '-');
+  std::replace(encoded.begin(), encoded.end(), '/', '_');
+  while (!encoded.empty() && encoded.back() == '=') {
+    encoded.pop_back();
+  }
+
+  return encoded;
+}
+
+std::string base64UrlEncode(const std::string& value) {
+  return base64UrlEncode(
+      reinterpret_cast<const unsigned char*>(value.data()),
+      value.size());
+}
+
+std::string signHs256(const std::string& unsigned_token, const std::string& secret) {
+  std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
+  unsigned int digest_size = 0;
+
+  unsigned char* result = HMAC(
+      EVP_sha256(),
+      secret.data(),
+      static_cast<int>(secret.size()),
+      reinterpret_cast<const unsigned char*>(unsigned_token.data()),
+      unsigned_token.size(),
+      digest.data(),
+      &digest_size);
+  if (!result || digest_size == 0) {
+    throw std::runtime_error("Failed to sign JWT with HS256");
+  }
+
+  return base64UrlEncode(digest.data(), digest_size);
+}
+
+std::string createServiceJwt(const WebRTCServiceConfig& config) {
+  const auto now = std::chrono::system_clock::now();
+  const auto now_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+      now.time_since_epoch()).count();
+
+  nlohmann::json header = {
+      {"alg", "HS256"},
+      {"typ", "JWT"},
+  };
+  nlohmann::json payload = {
+      {"sub", config.local_peer_id},
+      {"iss", config.auth_jwt_issuer},
+      {"aud", config.auth_jwt_audience},
+      {"iat", now_seconds},
+      {"exp", now_seconds + config.auth_jwt_ttl_seconds},
+      {"role", config.auth_jwt_role},
+      {"roles", nlohmann::json::array({config.auth_jwt_role})},
+      {"permissions", nlohmann::json::array({"signaling:connect"})},
+  };
+  if (config.auth_jwt_email && !config.auth_jwt_email->empty()) {
+    payload["email"] = *config.auth_jwt_email;
+  }
+
+  const std::string unsigned_token =
+      base64UrlEncode(header.dump()) + "." + base64UrlEncode(payload.dump());
+  return unsigned_token + "." + signHs256(unsigned_token, config.auth_jwt_secret);
+}
+
+std::string appendAccessToken(const std::string& url, const std::string& token) {
+  if (token.empty()) {
+    return url;
+  }
+
+  const auto fragment_pos = url.find('#');
+  const std::string base = url.substr(0, fragment_pos);
+  const std::string fragment =
+      fragment_pos == std::string::npos ? std::string() : url.substr(fragment_pos);
+  const char separator = base.find('?') == std::string::npos ? '?' : '&';
+  return base + separator + "access_token=" + token + fragment;
+}
+
+std::string buildAuthenticatedSignalingUrl(const WebRTCServiceConfig& config) {
+  if (config.auth_jwt_secret.empty()) {
+    return config.signaling_url;
+  }
+
+  return appendAccessToken(config.signaling_url, createServiceJwt(config));
+}
+
+}  // namespace
 
 WebRTCService::WebRTCService(WebRTCServiceConfig config) : config_(std::move(config)) {}
 
@@ -267,9 +375,10 @@ void WebRTCService::connectSignalingSocket() {
   });
 
   signaling_connect_in_progress_ = true;
+  const std::string signaling_url = buildAuthenticatedSignalingUrl(config_);
   std::cout << "[WebRTC] Connecting signaling websocket to " << config_.signaling_url
             << " (generation " << generation << ")" << std::endl;
-  socket->open(config_.signaling_url);
+  socket->open(signaling_url);
 }
 
 void WebRTCService::closeSignalingSocket() {
