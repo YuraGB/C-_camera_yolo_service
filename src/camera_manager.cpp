@@ -79,6 +79,7 @@ void CameraManager::captureLoop(const std::string& camera_id) {
 
     if (!opened) {
         std::cerr << "[WARN] Failed to open source: " << cam->source << std::endl;
+        cam->running = false;
         return;
     }
 

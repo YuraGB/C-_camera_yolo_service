@@ -57,6 +57,9 @@ class LinuxPlatformServices final : public PlatformServices {
   }
 
   std::vector<int> enumerateCameraIndices(int max_cameras) const override {
+    if (max_cameras <= 0) {
+      return {};
+    }
     std::set<int> discovered;
     std::error_code ec;
     const std::filesystem::path dev_dir("/dev");

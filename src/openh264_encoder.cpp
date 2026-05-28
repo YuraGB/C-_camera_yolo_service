@@ -184,6 +184,8 @@ void OpenH264Encoder::loadLibrary() {
       reinterpret_cast<DestroyEncoderFn>(loadSymbol(dll_handle_, "WelsDestroySVCEncoder"));
 
   if (!create_encoder_ || !destroy_encoder_) {
+    closeDynamicLibrary(dll_handle_);
+    dll_handle_ = nullptr;
     throw std::runtime_error("OpenH264 library is missing required encoder exports");
   }
 }

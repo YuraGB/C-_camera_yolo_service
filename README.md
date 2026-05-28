@@ -228,7 +228,7 @@ Local configuration templates:
 
 - `.env.example` is safe to commit
 - `.env` is local-only and ignored by git
-- large runtime assets are documented in [ASSETS.md](ASSETS.md)
+- large runtime assets are documented in [ASSETS.md](/E:/Progects/test/camera_cv_service/ASSETS.md)
 
 The executable reads environment variables from the process environment. In PowerShell, load `.env` before running:
 
@@ -349,7 +349,7 @@ The root [Dockerfile](/E:/Progects/test/camera_cv_service/Dockerfile) builds a L
 - ONNX Runtime under `/opt/onnxruntime`
 - OpenH264 built as a Linux shared library
 - libdatachannel built from source
-- default model mount path `/models/yolov8x.onnx`
+- default model mount path `/models/yolo26x.onnx`
 
 Build and run the default CPU image with Compose:
 

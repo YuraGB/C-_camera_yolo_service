@@ -40,6 +40,7 @@ FROM base AS onnxruntime
 
 ARG ONNXRUNTIME_VERSION
 ARG ONNXRUNTIME_FLAVOR
+ARG ONNXRUNTIME_SHA256
 
 RUN case "${ONNXRUNTIME_FLAVOR}" in \
     gpu) pkg="onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}" ;; \
@@ -49,6 +50,8 @@ RUN case "${ONNXRUNTIME_FLAVOR}" in \
     && curl -fsSL \
         "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/${pkg}.tgz" \
         -o /tmp/ort.tgz \
+    && : "${ONNXRUNTIME_SHA256:?Set ONNXRUNTIME_SHA256}" \
+    && echo "${ONNXRUNTIME_SHA256}  /tmp/onnxruntime.tgz" | sha256sum -c - \
     && mkdir -p /opt/onnxruntime \
     && tar -xzf /tmp/ort.tgz -C /opt/onnxruntime --strip-components=1 \
     && rm -f /tmp/ort.tgz

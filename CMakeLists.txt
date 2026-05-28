@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.18)
 
 if(WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE "E:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+    if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+    else()
+        message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE is not set. Define it explicitly or set VCPKG_ROOT.")
+    endif()
 endif()
 
 project(CameraCVService)
@@ -114,7 +118,7 @@ add_executable(camera_cv_service
 # Platform sources
 if(WIN32)
     target_sources(camera_cv_service PRIVATE src/platform/windows/windows_platform_services.cpp)
-elseif(UNIX)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(camera_cv_service PRIVATE src/platform/linux/linux_platform_services.cpp)
 else()
     message(FATAL_ERROR "Unsupported platform")
