@@ -188,7 +188,7 @@ void WebRTCService::attachVideoTrack(
 
   auto track = session->peer_connection->addTrack(video);
   auto rtp_config = std::make_shared<rtc::RtpPacketizationConfig>(
-      ssrc, cname, payload_type, rtc::H264RtpPacketizer::defaultClockRate);
+      ssrc, cname, payload_type, rtc::H264RtpPacketizer::ClockRate);
   auto packetizer = std::make_shared<rtc::H264RtpPacketizer>(
       rtc::NalUnit::Separator::StartSequence, rtp_config);
   auto sr_reporter = std::make_shared<rtc::RtcpSrReporter>(rtp_config);
