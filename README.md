@@ -228,7 +228,7 @@ Local configuration templates:
 
 - `.env.example` is safe to commit
 - `.env` is local-only and ignored by git
-- large runtime assets are documented in [ASSETS.md](/E:/Progects/test/camera_cv_service/ASSETS.md)
+- large runtime assets are documented in [ASSETS.md](ASSETS.md)
 
 The executable reads environment variables from the process environment. In PowerShell, load `.env` before running:
 
