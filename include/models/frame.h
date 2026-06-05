@@ -34,6 +34,8 @@ public:
     std::string camera_id;
     int64_t frame_id = 0;
     int64_t timestamp = 0;
+    int frame_width = 0;
+    int frame_height = 0;
 
     cv::Mat mat;
     std::vector<Detection> detections;
@@ -44,8 +46,10 @@ public:
         : camera_id(cam_id),
           frame_id(id),
           timestamp(ts),
+          frame_width(frame.cols),
+          frame_height(frame.rows),
           mat(frame.empty() ? cv::Mat() : frame.clone()) {}
 
-    int width() const { return mat.cols; }
-    int height() const { return mat.rows; }
+    int width() const { return mat.empty() ? frame_width : mat.cols; }
+    int height() const { return mat.empty() ? frame_height : mat.rows; }
 };

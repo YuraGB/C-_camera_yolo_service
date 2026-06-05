@@ -141,6 +141,7 @@ void WebRTCService::attachDataChannel(
                     << label << std::endl;
           if (label == config_.detection_channel_label) {
             sendTrackMap(locked);
+            sendPendingDetectionMessage(locked);
           }
         }
       });

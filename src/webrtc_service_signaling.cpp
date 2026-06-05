@@ -10,6 +10,7 @@ void WebRTCService::createOfferForPeer(const std::string& peer_id) {
   }
 
   cleanupFrontendSessionsExcept(peer_id);
+  cleanupPeerSession(peer_id);
 
   auto session = createPeerSession(peer_id);
   configurePeerSession(session, true);

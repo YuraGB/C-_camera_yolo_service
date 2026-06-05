@@ -1,6 +1,7 @@
 #include "webrtc_service.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 
 #include <nlohmann/json.hpp>
@@ -56,7 +57,20 @@ void WebRTCService::sendDetectionResult(const std::shared_ptr<Frame>& frame) {
               << frame->camera_id << ", detections=" << frame->detections.size()
               << ", timestamp=" << frame->timestamp << std::endl;
   }
-  broadcastDetectionMessage(buildDetectionMessage(*frame));
+
+  int target_width = 0;
+  int target_height = 0;
+  {
+    std::lock_guard<std::mutex> lock(sources_mutex_);
+    auto it = sources_.find(frame->camera_id);
+    if (it != sources_.end() && it->second) {
+      std::lock_guard<std::mutex> timeline_lock(it->second->timeline_mutex);
+      target_width = it->second->latest_encoded_width;
+      target_height = it->second->latest_encoded_height;
+    }
+  }
+
+  broadcastDetectionMessage(buildDetectionMessage(*frame, target_width, target_height));
 }
 
 void WebRTCService::sendPipelineMetrics(const nlohmann::json& payload) {
@@ -67,7 +81,10 @@ void WebRTCService::sendPipelineMetrics(const nlohmann::json& payload) {
   broadcastDetectionMessage(payload.dump());
 }
 
-std::string WebRTCService::buildDetectionMessage(const Frame& frame) const {
+std::string WebRTCService::buildDetectionMessage(
+    const Frame& frame,
+    int target_width,
+    int target_height) const {
   nlohmann::json payload = {
       {"type", "detection_frame"},
       {"camera_id", frame.camera_id},
@@ -75,16 +92,54 @@ std::string WebRTCService::buildDetectionMessage(const Frame& frame) const {
       {"detections", nlohmann::json::array()},
   };
 
+  const int source_width = frame.width();
+  const int source_height = frame.height();
+  const bool should_scale =
+      source_width > 0 && source_height > 0 &&
+      target_width > 0 && target_height > 0 &&
+      (source_width != target_width || source_height != target_height);
+  const double scale_x =
+      should_scale ? static_cast<double>(target_width) / source_width : 1.0;
+  const double scale_y =
+      should_scale ? static_cast<double>(target_height) / source_height : 1.0;
+
   for (const auto& detection : frame.detections) {
+    const int output_width = should_scale ? target_width : source_width;
+    const int output_height = should_scale ? target_height : source_height;
+    const int x = std::clamp(
+        static_cast<int>(std::round(detection.bbox.x * scale_x)),
+        0,
+        output_width > 0 ? output_width : detection.bbox.x);
+    const int y = std::clamp(
+        static_cast<int>(std::round(detection.bbox.y * scale_y)),
+        0,
+        output_height > 0 ? output_height : detection.bbox.y);
+    const int width = output_width > 0
+        ? std::clamp(
+              static_cast<int>(std::round(detection.bbox.width * scale_x)),
+              0,
+              std::max(0, output_width - x))
+        : std::max(
+              0,
+              static_cast<int>(std::round(detection.bbox.width * scale_x)));
+    const int height = output_height > 0
+        ? std::clamp(
+              static_cast<int>(std::round(detection.bbox.height * scale_y)),
+              0,
+              std::max(0, output_height - y))
+        : std::max(
+              0,
+              static_cast<int>(std::round(detection.bbox.height * scale_y)));
+
     payload["detections"].push_back({
         {"label", detection.label},
         {"confidence", detection.confidence},
         {"bbox",
          {
-             {"x", detection.bbox.x},
-             {"y", detection.bbox.y},
-             {"width", detection.bbox.width},
-             {"height", detection.bbox.height},
+             {"x", x},
+             {"y", y},
+             {"width", width},
+             {"height", height},
          }},
     });
   }
@@ -160,10 +215,16 @@ void WebRTCService::broadcastDetectionMessage(const std::string& message) {
       continue;
     }
     if (!session->detection_channel->isOpen()) {
-      std::cout << "[WebRTC] Skipping detection_frame for peer " << session->peer_id
-                << ": detection channel is not open" << std::endl;
+      std::lock_guard<std::mutex> pending_lock(session->pending_detection_mutex);
+      session->pending_detection_message = message;
+      if (!session->logged_detection_channel_not_open) {
+        std::cout << "[WebRTC] Queueing detection_frame for peer " << session->peer_id
+                  << ": detection channel is not open yet" << std::endl;
+        session->logged_detection_channel_not_open = true;
+      }
       continue;
     }
+    sendPendingDetectionMessage(session);
     if (session->detection_channel->bufferedAmount() >
         config_.max_detection_buffered_bytes) {
       std::cout << "[WebRTC] Skipping detection_frame for peer " << session->peer_id
@@ -176,6 +237,26 @@ void WebRTCService::broadcastDetectionMessage(const std::string& message) {
       std::cout << "[WebRTC] Sending detection_frame to peer " << session->peer_id
                 << std::endl;
     }
+    session->detection_channel->send(message);
+  }
+}
+
+void WebRTCService::sendPendingDetectionMessage(
+    const std::shared_ptr<PeerSession>& session) {
+  if (!session || !session->detection_channel || !session->detection_channel->isOpen()) {
+    return;
+  }
+
+  std::string message;
+  {
+    std::lock_guard<std::mutex> lock(session->pending_detection_mutex);
+    message.swap(session->pending_detection_message);
+    session->logged_detection_channel_not_open = false;
+  }
+
+  if (!message.empty() &&
+      session->detection_channel->bufferedAmount() <=
+          config_.max_detection_buffered_bytes) {
     session->detection_channel->send(message);
   }
 }
@@ -307,6 +388,11 @@ void WebRTCService::encodeAndBroadcastVideo(
 
   cv::Mat live_mat = prepareLiveFrameForEncoding(
       frame->mat, config_.max_live_width, config_.max_live_height);
+  {
+    std::lock_guard<std::mutex> lock(source_state->timeline_mutex);
+    source_state->latest_encoded_width = live_mat.cols;
+    source_state->latest_encoded_height = live_mat.rows;
+  }
 
   const bool force_idr =
       shouldForceKeyframe(source_state->encoded_frame_count,
@@ -408,6 +494,8 @@ void WebRTCService::stopSourceWorker(
     source_state->last_encoded_frame_timestamp_ms = -1;
     source_state->last_latency_sample_sent_ms = -1;
     source_state->last_pipeline_metrics_sent_ms = -1;
+    source_state->latest_encoded_width = 0;
+    source_state->latest_encoded_height = 0;
     source_state->smoothed_live_fps = 0.0;
     source_state->encoded_frame_count = 0;
     source_state->metrics_received_frames = 0;

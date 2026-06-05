@@ -242,7 +242,7 @@ Get-Content .env | ForEach-Object {
 .\build\bin\Release\camera_cv_service.exe
 ```
 
-When connecting to `server_for_cam_det`, set `CAMERA_AUTH_JWT_SECRET` to the same strong secret as the server's `AUTH_JWT_SECRET`. If the secret is set, the C++ service signs a short-lived HS256 JWT and sends it to the signaling server as the WebSocket `access_token` query parameter.
+When connecting to `server_for_cam_det`, set `CAMERA_AUTH_JWT_SECRET` to the same strong secret as the server's `AUTH_JWT_SECRET`. If the secret is set, the C++ service signs a short-lived HS256 JWT and sends it to the signaling server as the WebSocket `token` query parameter.
 
 Prepare local assets after cloning:
 
@@ -288,7 +288,7 @@ Defaults:
 
 - signaling URL: `ws://127.0.0.1:3002/ws`
 - local peer id: `camera-cv-service`
-- JWT issuer/audience: `cam_frontend` / `cam_serv`
+- JWT issuer/audience: `camera-cv-service` / `signaling`
 - JWT TTL: `300s`
 - ICE server: `stun:stun.l.google.com:19302`
 - inference size: `640x640`

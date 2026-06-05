@@ -110,8 +110,8 @@ RuntimeConfig loadRuntimeConfig(const platform::PlatformServices& platform_servi
   config.webrtc.local_peer_id = readEnvString("CAMERA_PEER_ID", "camera-cv-service");
   config.webrtc.remote_peer_id = readOptionalEnvString("CAMERA_REMOTE_PEER_ID");
   config.webrtc.auth_jwt_secret = readEnvString("CAMERA_AUTH_JWT_SECRET", "");
-  config.webrtc.auth_jwt_issuer = readEnvString("CAMERA_AUTH_JWT_ISSUER", "cam_frontend");
-  config.webrtc.auth_jwt_audience = readEnvString("CAMERA_AUTH_JWT_AUDIENCE", "cam_serv");
+  config.webrtc.auth_jwt_issuer = readEnvString("CAMERA_AUTH_JWT_ISSUER", "camera-cv-service");
+  config.webrtc.auth_jwt_audience = readEnvString("CAMERA_AUTH_JWT_AUDIENCE", "signaling");
   config.webrtc.auth_jwt_role = readEnvString("CAMERA_AUTH_JWT_ROLE", "service");
   config.webrtc.auth_jwt_email = readOptionalEnvString("CAMERA_AUTH_JWT_EMAIL");
   config.webrtc.auth_jwt_ttl_seconds = std::clamp(

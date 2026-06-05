@@ -169,6 +169,8 @@ void CameraManager::captureLoop(const std::string& camera_id) {
         frame->frame_id = frame_id++;
         frame->timestamp = frameTimestampForSource();
         frame->mat = std::move(mat);
+        frame->frame_width = frame->mat.cols;
+        frame->frame_height = frame->mat.rows;
 
         enqueueFrame(frame, *cam);
         paceVideoFilePlayback();

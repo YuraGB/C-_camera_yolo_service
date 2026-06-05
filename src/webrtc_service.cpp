@@ -95,7 +95,7 @@ std::string createServiceJwt(const WebRTCServiceConfig& config) {
   return unsigned_token + "." + signHs256(unsigned_token, config.auth_jwt_secret);
 }
 
-std::string appendAccessToken(const std::string& url, const std::string& token) {
+std::string appendAuthToken(const std::string& url, const std::string& token) {
   if (token.empty()) {
     return url;
   }
@@ -105,7 +105,7 @@ std::string appendAccessToken(const std::string& url, const std::string& token) 
   const std::string fragment =
       fragment_pos == std::string::npos ? std::string() : url.substr(fragment_pos);
   const char separator = base.find('?') == std::string::npos ? '?' : '&';
-  return base + separator + "access_token=" + token + fragment;
+  return base + separator + "token=" + token + fragment;
 }
 
 std::string buildAuthenticatedSignalingUrl(const WebRTCServiceConfig& config) {
@@ -113,7 +113,7 @@ std::string buildAuthenticatedSignalingUrl(const WebRTCServiceConfig& config) {
     return config.signaling_url;
   }
 
-  return appendAccessToken(config.signaling_url, createServiceJwt(config));
+  return appendAuthToken(config.signaling_url, createServiceJwt(config));
 }
 
 }  // namespace

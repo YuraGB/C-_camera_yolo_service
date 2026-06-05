@@ -21,23 +21,28 @@ std::atomic<bool> g_running{true};
 namespace {
 void drainDetectionResults(
     InferenceEngine& inference_engine,
-    TrackingManager& tracking_manager)
+    TrackingManager& tracking_manager,
+    WebRTCService& webrtc_service)
 {
     while (auto result = inference_engine.getResult()) {
+        if (!result->detections.empty()) {
+            webrtc_service.sendDetectionResult(result);
+        }
         tracking_manager.submitDetections(result);
     }
 }
 
 void detectionPublishLoop(
     InferenceEngine& inference_engine,
-    TrackingManager& tracking_manager)
+    TrackingManager& tracking_manager,
+    WebRTCService& webrtc_service)
 {
     while (g_running) {
-        drainDetectionResults(inference_engine, tracking_manager);
+        drainDetectionResults(inference_engine, tracking_manager, webrtc_service);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    drainDetectionResults(inference_engine, tracking_manager);
+    drainDetectionResults(inference_engine, tracking_manager, webrtc_service);
 }
 
 void inferenceMetricsPublishLoop(
@@ -61,6 +66,7 @@ void inferenceMetricsPublishLoop(
         nlohmann::json payload = {
             {"type", "pipeline_metrics"},
             {"scope", "inference"},
+            {"camera_id", "all"},
             {"interval_ms", interval_ms},
             {"submitted_frames", snapshot.submitted_frames},
             {"dropped_pending_frames", snapshot.dropped_pending_frames},
@@ -178,7 +184,11 @@ int main() {
         camera_manager.startAllCameras();
         inference_engine.start();
         webrtc_service.start();
-        std::thread detection_thread(detectionPublishLoop, std::ref(inference_engine), std::ref(tracking_manager));
+        std::thread detection_thread(
+            detectionPublishLoop,
+            std::ref(inference_engine),
+            std::ref(tracking_manager),
+            std::ref(webrtc_service));
         std::thread metrics_thread(
             inferenceMetricsPublishLoop,
             std::ref(inference_engine),
@@ -204,7 +214,9 @@ int main() {
 
                     webrtc_service.sendFrame(frame->camera_id, frame);
                     inference_engine.processFrame(frame);
-                    if (auto tracked_frame = tracking_manager.buildTrackedFrame(frame)) {
+                    drainDetectionResults(inference_engine, tracking_manager, webrtc_service);
+                    if (auto tracked_frame = tracking_manager.buildTrackedFrame(frame);
+                        tracked_frame && !tracked_frame->detections.empty()) {
                         webrtc_service.sendDetectionResult(tracked_frame);
                     }
                 }

@@ -39,6 +39,7 @@ class TrackingManager {
 
   struct CameraState {
     std::shared_ptr<Frame> pending_detection_frame;
+    std::shared_ptr<Frame> latest_detection_frame;
     std::vector<PredictedTrack> active_tracks;
   };
 

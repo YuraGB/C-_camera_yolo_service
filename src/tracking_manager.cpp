@@ -25,6 +25,7 @@ std::shared_ptr<Frame> TrackingManager::buildTrackedFrame(const std::shared_ptr<
   if (state.pending_detection_frame &&
       state.pending_detection_frame->timestamp <= live_frame->timestamp) {
     applyDetectionUpdate(state, state.pending_detection_frame);
+    state.latest_detection_frame = state.pending_detection_frame;
     state.pending_detection_frame.reset();
   }
 
@@ -57,7 +58,18 @@ std::shared_ptr<Frame> TrackingManager::buildTrackedFrame(const std::shared_ptr<
   tracked_frame->camera_id = live_frame->camera_id;
   tracked_frame->frame_id = live_frame->frame_id;
   tracked_frame->timestamp = live_frame->timestamp;
+  tracked_frame->frame_width = live_frame->width();
+  tracked_frame->frame_height = live_frame->height();
   tracked_frame->detections = buildDetectionsForFrame(state.active_tracks, *live_frame);
+  if (tracked_frame->detections.empty() &&
+      state.latest_detection_frame &&
+      !state.latest_detection_frame->detections.empty()) {
+    const int64_t detection_age_ms =
+        std::max<int64_t>(0, live_frame->timestamp - state.latest_detection_frame->timestamp);
+    if (detection_age_ms <= config_.max_prediction_gap_ms) {
+      tracked_frame->detections = state.latest_detection_frame->detections;
+    }
+  }
   return tracked_frame;
 }
 

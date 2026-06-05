@@ -34,8 +34,8 @@ struct WebRTCServiceConfig {
   int pipeline_metrics_interval_ms = 1000;
   std::string openh264_dll_path = "third_party/openh264-2.6.0-win64.dll";
   std::string auth_jwt_secret;
-  std::string auth_jwt_issuer = "cam_frontend";
-  std::string auth_jwt_audience = "cam_serv";
+  std::string auth_jwt_issuer = "camera-cv-service";
+  std::string auth_jwt_audience = "signaling";
   std::string auth_jwt_role = "service";
   std::optional<std::string> auth_jwt_email;
   int auth_jwt_ttl_seconds = 300;
@@ -77,6 +77,8 @@ class WebRTCService {
     int64_t last_encoded_frame_timestamp_ms = -1;
     int64_t last_latency_sample_sent_ms = -1;
     int64_t last_pipeline_metrics_sent_ms = -1;
+    int latest_encoded_width = 0;
+    int latest_encoded_height = 0;
     double smoothed_live_fps = 0.0;
     int64_t encoded_frame_count = 0;
     int64_t metrics_received_frames = 0;
@@ -94,6 +96,9 @@ class WebRTCService {
     std::unordered_map<std::string, std::shared_ptr<rtc::Track>> video_tracks;
     std::unordered_map<std::string, std::shared_ptr<rtc::RtpPacketizationConfig>> video_rtp_configs;
     std::shared_ptr<rtc::DataChannel> detection_channel;
+    std::mutex pending_detection_mutex;
+    std::string pending_detection_message;
+    bool logged_detection_channel_not_open = false;
     std::atomic<bool> configured{false};
   };
 
@@ -104,7 +109,10 @@ class WebRTCService {
   void cleanupPeerSession(const std::string& peer_id);
   void cleanupFrontendSessionsExcept(const std::string& active_peer_id);
 
-  std::string buildDetectionMessage(const Frame& frame) const;
+  std::string buildDetectionMessage(
+      const Frame& frame,
+      int target_width = 0,
+      int target_height = 0) const;
   std::string buildVideoLatencySampleMessage(
       const SourceStreamState& source_state,
       const Frame& frame,
@@ -113,6 +121,7 @@ class WebRTCService {
       const SourceStreamState& source_state,
       int64_t now_ms) const;
   void broadcastDetectionMessage(const std::string& message);
+  void sendPendingDetectionMessage(const std::shared_ptr<PeerSession>& session);
   void maybeSendVideoLatencySample(
       const std::shared_ptr<SourceStreamState>& source_state,
       const std::shared_ptr<Frame>& frame,

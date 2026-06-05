@@ -47,6 +47,6 @@ docker run --rm -it \
 Inside the container the service reads:
 
 ```text
-/models/yolo26x.onnx
+/models/yolov8x.onnx
 /media/test_video.mp4
 ```

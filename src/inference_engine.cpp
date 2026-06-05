@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <chrono>
@@ -571,6 +572,8 @@ std::shared_ptr<Frame> InferenceEngine::processFrameImpl(const std::shared_ptr<F
             result_frame->camera_id = frame->camera_id;
             result_frame->frame_id = frame->frame_id;
             result_frame->timestamp = frame->timestamp;
+            result_frame->frame_width = frame->width();
+            result_frame->frame_height = frame->height();
             result_frame->detections = parseYOLO(output_data, output_shape, frame->mat.cols, frame->mat.rows);
             const auto inference_us = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - inference_started).count();
@@ -618,7 +621,7 @@ std::vector<Detection> InferenceEngine::parseYOLO(
     int frame_height) {
     std::vector<Detection> detections;
 
-    if (output_shape.size() != 3 || output_shape[1] < 5 || output_shape[2] <= 0) {
+    if (output_shape.size() != 3 || output_shape[1] <= 0 || output_shape[2] <= 0) {
         std::cerr << "[YOLO] Unexpected output shape:";
         for (auto dim : output_shape) {
             std::cerr << " " << dim;
@@ -627,9 +630,39 @@ std::vector<Detection> InferenceEngine::parseYOLO(
         return detections;
     }
 
-    const int64_t num_features = output_shape[1];
-    const int64_t num_predictions = output_shape[2];
-    const int num_classes = static_cast<int>(num_features - 4);
+    const int64_t dim1 = output_shape[1];
+    const int64_t dim2 = output_shape[2];
+    const bool feature_major = dim1 <= 256 && dim1 < dim2;
+    const int64_t num_features = feature_major ? dim1 : dim2;
+    const int64_t num_predictions = feature_major ? dim2 : dim1;
+
+    if (num_features < 6 || num_predictions <= 0) {
+        std::cerr << "[YOLO] Unsupported output shape:";
+        for (auto dim : output_shape) {
+            std::cerr << " " << dim;
+        }
+        std::cerr << std::endl;
+        return detections;
+    }
+
+    if (verbose_logging_) {
+        static std::atomic<bool> logged_shape{false};
+        bool expected = false;
+        if (logged_shape.compare_exchange_strong(expected, true)) {
+            std::cout << "[YOLO] Output shape:";
+            for (auto dim : output_shape) {
+                std::cout << " " << dim;
+            }
+            std::cout << ", layout=" << (feature_major ? "features-first" : "predictions-first")
+                      << std::endl;
+        }
+    }
+
+    auto at = [&](int64_t pred, int64_t feature) -> float {
+        return feature_major
+            ? data[(feature * num_predictions) + pred]
+            : data[(pred * num_features) + feature];
+    };
 
     const float scale_x = static_cast<float>(frame_width) / static_cast<float>(input_width_);
     const float scale_y = static_cast<float>(frame_height) / static_cast<float>(input_height_);
@@ -642,29 +675,71 @@ std::vector<Detection> InferenceEngine::parseYOLO(
     class_ids.reserve(boxes.capacity());
 
     for (int64_t pred = 0; pred < num_predictions; ++pred) {
-        const float x = data[pred];
-        const float y = data[num_predictions + pred];
-        const float w = data[(2 * num_predictions) + pred];
-        const float h = data[(3 * num_predictions) + pred];
+        const float x = at(pred, 0);
+        const float y = at(pred, 1);
+        const float w_or_x2 = at(pred, 2);
+        const float h_or_y2 = at(pred, 3);
 
         float max_conf = 0.0f;
         int class_id = -1;
-        for (int cls = 0; cls < num_classes; ++cls) {
-            const float conf = data[((4 + cls) * num_predictions) + pred];
-            if (conf > max_conf) {
-                max_conf = conf;
-                class_id = cls;
+        const float maybe_class_id = num_features == 6 ? at(pred, 5) : -1.0f;
+        const bool nms_output =
+            num_features == 6 &&
+            maybe_class_id >= 0.0f &&
+            maybe_class_id < static_cast<float>(kCocoLabels.size()) &&
+            std::abs(maybe_class_id - std::round(maybe_class_id)) < 0.001f;
+
+        if (nms_output) {
+            max_conf = at(pred, 4);
+            class_id = static_cast<int>(std::round(maybe_class_id));
+        } else {
+            const bool has_objectness = num_features == 85 || num_features == 6 + static_cast<int64_t>(kCocoLabels.size());
+            const float objectness = has_objectness ? at(pred, 4) : 1.0f;
+            const int class_offset = has_objectness ? 5 : 4;
+            const int num_classes = static_cast<int>(num_features - class_offset);
+
+            for (int cls = 0; cls < num_classes; ++cls) {
+                const float class_conf = at(pred, class_offset + cls);
+                const float conf = objectness * class_conf;
+                if (conf > max_conf) {
+                    max_conf = conf;
+                    class_id = cls;
+                }
             }
         }
 
-        if (max_conf <= confidence_threshold_) {
+        if (!std::isfinite(max_conf) || max_conf <= confidence_threshold_) {
             continue;
         }
 
-        const int left = std::max(0, static_cast<int>((x - (w * 0.5f)) * scale_x));
-        const int top = std::max(0, static_cast<int>((y - (h * 0.5f)) * scale_y));
-        const int width = std::max(0, static_cast<int>(w * scale_x));
-        const int height = std::max(0, static_cast<int>(h * scale_y));
+        float left_f = 0.0f;
+        float top_f = 0.0f;
+        float right_f = 0.0f;
+        float bottom_f = 0.0f;
+
+        const bool normalized_coords =
+            std::max({std::abs(x), std::abs(y), std::abs(w_or_x2), std::abs(h_or_y2)}) <= 2.0f;
+        const float coord_scale_x = normalized_coords ? static_cast<float>(frame_width) : scale_x;
+        const float coord_scale_y = normalized_coords ? static_cast<float>(frame_height) : scale_y;
+
+        if (nms_output && w_or_x2 > x && h_or_y2 > y) {
+            left_f = x * coord_scale_x;
+            top_f = y * coord_scale_y;
+            right_f = w_or_x2 * coord_scale_x;
+            bottom_f = h_or_y2 * coord_scale_y;
+        } else {
+            left_f = (x - (w_or_x2 * 0.5f)) * coord_scale_x;
+            top_f = (y - (h_or_y2 * 0.5f)) * coord_scale_y;
+            right_f = (x + (w_or_x2 * 0.5f)) * coord_scale_x;
+            bottom_f = (y + (h_or_y2 * 0.5f)) * coord_scale_y;
+        }
+
+        const int left = std::clamp(static_cast<int>(std::round(left_f)), 0, frame_width);
+        const int top = std::clamp(static_cast<int>(std::round(top_f)), 0, frame_height);
+        const int right = std::clamp(static_cast<int>(std::round(right_f)), 0, frame_width);
+        const int bottom = std::clamp(static_cast<int>(std::round(bottom_f)), 0, frame_height);
+        const int width = std::max(0, right - left);
+        const int height = std::max(0, bottom - top);
 
         if (width == 0 || height == 0) {
             continue;
