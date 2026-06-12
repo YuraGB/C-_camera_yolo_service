@@ -78,6 +78,39 @@ void inferenceMetricsPublishLoop(
         webrtc_service.sendPipelineMetrics(payload);
     }
 }
+
+void inferenceMetricsPublishLoop(
+    InferenceEngine& inference_engine,
+    WebRTCService& webrtc_service,
+    int interval_ms)
+{
+    if (interval_ms <= 0) {
+        return;
+    }
+
+    while (g_running) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        const auto snapshot = inference_engine.consumeMetricsSnapshot();
+        if (snapshot.submitted_frames == 0 &&
+            snapshot.processed_frames == 0 &&
+            snapshot.dropped_pending_frames == 0) {
+            continue;
+        }
+
+        nlohmann::json payload = {
+            {"type", "pipeline_metrics"},
+            {"scope", "inference"},
+            {"interval_ms", interval_ms},
+            {"submitted_frames", snapshot.submitted_frames},
+            {"dropped_pending_frames", snapshot.dropped_pending_frames},
+            {"processed_frames", snapshot.processed_frames},
+            {"total_detections", snapshot.total_detections},
+            {"avg_inference_ms", snapshot.avg_inference_ms},
+            {"max_inference_ms", snapshot.max_inference_ms},
+        };
+        webrtc_service.sendPipelineMetrics(payload);
+    }
+}
 }
 
 void signalHandler(int signum) {
