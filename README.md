@@ -300,14 +300,13 @@ Use ONNX Runtime GPU providers: ROCM (AMD), OpenCL (Intel), or CPU fallback.
 **Docker (CPU fallback):**
 
 ```bash
-docker-compose up --build
-RUNTIME_BACKEND=onnx
+RUNTIME_BACKEND=onnx docker-compose up --build
 ```
 
 **Docker with ROCM (AMD Radeon):**
 
 ```bash
-docker-compose -f docker-compose.yml up --build
+RUNTIME_BACKEND=onnx docker-compose -f docker-compose.yml -f docker-compose.rocm.yml up --build
 ```
 
 Create `docker-compose.rocm.yml`:
@@ -374,6 +373,7 @@ This uses:
 ```bash
 export RUNTIME_BACKEND=tensorrt
 export CAMERA_MODEL_PATH=/models/yolov8x.engine
+export CAMERA_ONNX_FALLBACK_MODEL_PATH=/models/yolov8x.onnx
 export CAMERA_SIGNALING_URL=ws://127.0.0.1:3002/ws
 ```
 
@@ -413,6 +413,7 @@ Then set:
 
 ```bash
 export CAMERA_MODEL_PATH=/path/to/yolov8x.engine
+export CAMERA_ONNX_FALLBACK_MODEL_PATH=/path/to/yolov8x.onnx
 export RUNTIME_BACKEND=tensorrt
 ```
 
@@ -433,6 +434,7 @@ RUNTIME_BACKEND=tensorrt ./camera_cv_service
 Useful environment variables:
 
 - `CAMERA_MODEL_PATH`
+- `CAMERA_ONNX_FALLBACK_MODEL_PATH`
 - `CAMERA_TEST_VIDEO_PATH`
 - `CAMERA_SIGNALING_URL`
 - `CAMERA_PEER_ID`

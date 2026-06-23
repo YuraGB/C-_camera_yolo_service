@@ -143,8 +143,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     tini \
     tensorrt=${TENSORRT_VERSION}-1+cuda12.2 \
-    libnvinfer-so-${TENSORRT_VERSION} \
-    libnvinfer-plugin-so-${TENSORRT_VERSION} \
+    libnvinfer8 \
+    libnvinfer-plugin8 \
+    && groupadd --system camera \
+    && useradd --system --gid camera --groups video --home-dir /opt/app --shell /usr/sbin/nologin camera \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=onnxruntime /opt/onnxruntime /opt/onnxruntime
@@ -154,7 +156,11 @@ COPY --from=libdatachannel /opt/libdatachannel /usr/local
 
 ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/openh264/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64
 
+RUN chown -R camera:camera /opt/app
+
 WORKDIR /opt/app
+
+USER camera
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/opt/app/bin/camera_cv_service"]

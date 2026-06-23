@@ -28,4 +28,5 @@ public:
 class InferenceBackendFactory {
 public:
     static std::unique_ptr<InferenceBackend> createBackend();
+    static std::unique_ptr<InferenceBackend> createBackend(const std::string& runtime_backend);
 };

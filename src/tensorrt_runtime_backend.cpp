@@ -5,6 +5,7 @@
 #include <fstream>
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 #include <cuda_runtime.h>
 
 namespace {
@@ -33,6 +34,98 @@ bool readEnvBool(const char* name, bool fallback) {
     }
     return fallback;
 }
+
+size_t dataTypeSize(nvinfer1::DataType type) {
+    switch (type) {
+        case nvinfer1::DataType::kFLOAT:
+            return 4;
+        case nvinfer1::DataType::kHALF:
+            return 2;
+        case nvinfer1::DataType::kINT8:
+            return 1;
+        case nvinfer1::DataType::kINT32:
+            return 4;
+        case nvinfer1::DataType::kBOOL:
+            return 1;
+        default:
+            throw std::runtime_error("[TensorRT] Unsupported binding data type");
+    }
+}
+
+size_t dimsVolume(const nvinfer1::Dims& dims) {
+    if (dims.nbDims <= 0) {
+        throw std::runtime_error("[TensorRT] Binding dimensions are empty");
+    }
+
+    size_t volume = 1;
+    for (int i = 0; i < dims.nbDims; ++i) {
+        if (dims.d[i] <= 0) {
+            throw std::runtime_error("[TensorRT] Binding dimensions are not fully resolved");
+        }
+        volume *= static_cast<size_t>(dims.d[i]);
+    }
+    return volume;
+}
+
+bool hasDynamicDim(const nvinfer1::Dims& dims) {
+    for (int i = 0; i < dims.nbDims; ++i) {
+        if (dims.d[i] < 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+nvinfer1::Dims shapeToDims(const std::vector<int64_t>& shape, int target_rank) {
+    if (shape.empty() || shape.size() > 8 || target_rank <= 0 || target_rank > 8) {
+        throw std::runtime_error("[TensorRT] Unsupported input shape rank");
+    }
+
+    size_t source_offset = 0;
+    if (static_cast<size_t>(target_rank) + 1 == shape.size()) {
+        source_offset = 1;
+    } else if (static_cast<size_t>(target_rank) != shape.size()) {
+        throw std::runtime_error("[TensorRT] Input shape rank does not match engine binding rank");
+    }
+
+    nvinfer1::Dims dims{};
+    dims.nbDims = target_rank;
+    for (int i = 0; i < dims.nbDims; ++i) {
+        const int64_t dim = shape[source_offset + static_cast<size_t>(i)];
+        if (dim <= 0) {
+            throw std::runtime_error("[TensorRT] Input shape contains a non-positive dimension");
+        }
+        dims.d[i] = static_cast<int>(dim);
+    }
+    return dims;
+}
+
+void ensureDeviceBuffer(std::vector<void*>& bindings, std::vector<size_t>& sizes, int index, size_t bytes) {
+    if (bytes == 0) {
+        throw std::runtime_error("[TensorRT] Refusing to allocate an empty binding buffer");
+    }
+
+    if (index < 0 || static_cast<size_t>(index) >= bindings.size()) {
+        throw std::runtime_error("[TensorRT] Binding index is out of range");
+    }
+
+    if (sizes[static_cast<size_t>(index)] >= bytes && bindings[static_cast<size_t>(index)] != nullptr) {
+        return;
+    }
+
+    if (bindings[static_cast<size_t>(index)] != nullptr) {
+        cudaFree(bindings[static_cast<size_t>(index)]);
+        bindings[static_cast<size_t>(index)] = nullptr;
+        sizes[static_cast<size_t>(index)] = 0;
+    }
+
+    cudaError_t cuda_status = cudaMalloc(&bindings[static_cast<size_t>(index)], bytes);
+    if (cuda_status != cudaSuccess) {
+        throw std::runtime_error("[TensorRT] CUDA memory allocation failed: " +
+                                 std::string(cudaGetErrorString(cuda_status)));
+    }
+    sizes[static_cast<size_t>(index)] = bytes;
+}
 }
 
 void TensorRTBackend::Logger::log(Severity severity, const char* msg) noexcept {
@@ -52,7 +145,9 @@ void TensorRTBackend::Logger::log(Severity severity, const char* msg) noexcept {
 }
 
 TensorRTBackend::TensorRTBackend()
-    : verbose_logging_(false) {
+    : input_binding_index_(-1),
+      output_binding_index_(-1),
+      verbose_logging_(false) {
 }
 
 TensorRTBackend::~TensorRTBackend() {
@@ -112,20 +207,34 @@ void TensorRTBackend::initialize(const std::string& model_path) {
 
     int num_bindings = engine_->getNbBindings();
     device_bindings_.resize(num_bindings);
+    binding_sizes_.resize(num_bindings, 0);
 
     for (int i = 0; i < num_bindings; ++i) {
-        nvinfer1::Dims dims = engine_->getBindingDimensions(i);
-        size_t volume = 1;
-        for (int j = 0; j < dims.nbDims; ++j) {
-            volume *= dims.d[j];
+        const nvinfer1::DataType type = engine_->getBindingDataType(i);
+        if (type != nvinfer1::DataType::kFLOAT) {
+            throw std::runtime_error("[TensorRT] Only FP32 TensorRT bindings are supported");
         }
 
-        size_t binding_size = volume * sizeof(float);
-        cudaError_t cuda_status = cudaMalloc(&device_bindings_[i], binding_size);
-        if (cuda_status != cudaSuccess) {
-            throw std::runtime_error("[TensorRT] CUDA memory allocation failed: " + 
-                                    std::string(cudaGetErrorString(cuda_status)));
+        if (engine_->bindingIsInput(i)) {
+            if (input_binding_index_ != -1) {
+                throw std::runtime_error("[TensorRT] Multiple input bindings are not supported");
+            }
+            input_binding_index_ = i;
+        } else {
+            if (output_binding_index_ != -1) {
+                throw std::runtime_error("[TensorRT] Multiple output bindings are not supported");
+            }
+            output_binding_index_ = i;
         }
+
+        nvinfer1::Dims dims = engine_->getBindingDimensions(i);
+        if (!hasDynamicDim(dims)) {
+            ensureDeviceBuffer(device_bindings_, binding_sizes_, i, dimsVolume(dims) * dataTypeSize(type));
+        }
+    }
+
+    if (input_binding_index_ == -1 || output_binding_index_ == -1) {
+        throw std::runtime_error("[TensorRT] Engine must expose exactly one input and one output binding");
     }
 
     std::cout << "[TensorRT] Engine initialized with " << num_bindings << " bindings" << std::endl;
@@ -149,9 +258,44 @@ std::vector<Detection> TensorRTBackend::runInference(
     }
 
     try {
-        size_t input_size = input_shape[1] * input_shape[2] * input_shape[3] * sizeof(float);
+        if (input_shape.size() < 4) {
+            throw std::runtime_error("[TensorRT] Input shape must have at least 4 dimensions");
+        }
 
-        cudaError_t cuda_status = cudaMemcpy(device_bindings_[0], input_data, input_size, cudaMemcpyHostToDevice);
+        nvinfer1::Dims model_input_dims = engine_->getBindingDimensions(input_binding_index_);
+        if (hasDynamicDim(model_input_dims)) {
+            if (!context_->setBindingDimensions(input_binding_index_, shapeToDims(input_shape, model_input_dims.nbDims))) {
+                throw std::runtime_error("[TensorRT] Failed to set dynamic input dimensions");
+            }
+            model_input_dims = context_->getBindingDimensions(input_binding_index_);
+        } else if (model_input_dims.nbDims == static_cast<int>(input_shape.size())) {
+            for (int i = 0; i < model_input_dims.nbDims; ++i) {
+                if (model_input_dims.d[i] != static_cast<int>(input_shape[static_cast<size_t>(i)])) {
+                    throw std::runtime_error("[TensorRT] Input shape does not match engine binding dimensions");
+                }
+            }
+        } else if (model_input_dims.nbDims + 1 == static_cast<int>(input_shape.size())) {
+            for (int i = 0; i < model_input_dims.nbDims; ++i) {
+                if (model_input_dims.d[i] != static_cast<int>(input_shape[static_cast<size_t>(i + 1)])) {
+                    throw std::runtime_error("[TensorRT] Input shape does not match engine binding dimensions");
+                }
+            }
+        } else {
+            throw std::runtime_error("[TensorRT] Input shape rank does not match engine binding rank");
+        }
+
+        if (!context_->allInputDimensionsSpecified()) {
+            throw std::runtime_error("[TensorRT] Dynamic input dimensions are not fully specified");
+        }
+
+        const size_t input_size = dimsVolume(model_input_dims) * dataTypeSize(engine_->getBindingDataType(input_binding_index_));
+        ensureDeviceBuffer(device_bindings_, binding_sizes_, input_binding_index_, input_size);
+
+        nvinfer1::Dims output_dims = context_->getBindingDimensions(output_binding_index_);
+        const size_t output_size = dimsVolume(output_dims) * dataTypeSize(engine_->getBindingDataType(output_binding_index_));
+        ensureDeviceBuffer(device_bindings_, binding_sizes_, output_binding_index_, output_size);
+
+        cudaError_t cuda_status = cudaMemcpy(device_bindings_[static_cast<size_t>(input_binding_index_)], input_data, input_size, cudaMemcpyHostToDevice);
         if (cuda_status != cudaSuccess) {
             std::cerr << "[TensorRT] CUDA copy to device failed: " << cudaGetErrorString(cuda_status) << std::endl;
             return {};
@@ -163,24 +307,14 @@ std::vector<Detection> TensorRTBackend::runInference(
         }
 
         std::vector<float> output_data;
-        nvinfer1::Dims output_dims = engine_->getBindingDimensions(1);
-        size_t output_volume = 1;
-        for (int i = 0; i < output_dims.nbDims; ++i) {
-            output_volume *= output_dims.d[i];
-        }
+        const size_t output_volume = output_size / sizeof(float);
         output_data.resize(output_volume);
 
-        cuda_status = cudaMemcpy(output_data.data(), device_bindings_[1], 
-                                output_volume * sizeof(float), cudaMemcpyDeviceToHost);
+        cuda_status = cudaMemcpy(output_data.data(), device_bindings_[static_cast<size_t>(output_binding_index_)],
+                                output_size, cudaMemcpyDeviceToHost);
         if (cuda_status != cudaSuccess) {
             std::cerr << "[TensorRT] CUDA copy from device failed: " << cudaGetErrorString(cuda_status) << std::endl;
             return {};
-        }
-
-        std::vector<int64_t> output_shape;
-        output_shape.resize(output_dims.nbDims);
-        for (int i = 0; i < output_dims.nbDims; ++i) {
-            output_shape[i] = output_dims.d[i];
         }
 
         return parseYOLO(output_data.data(), output_data.size(), frame_width, frame_height,
