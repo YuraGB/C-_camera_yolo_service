@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <thread>
+#include <stdexcept>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -176,10 +177,25 @@ std::vector<Detection> ONNXRuntimeBackend::runInference(
     if (!session_) return {};
 
     try {
+        if (input_shape.size() < 4) {
+            throw std::runtime_error("[ONNX] Input shape must have at least 4 dimensions");
+        }
+        if (input_names_.size() != 1) {
+            throw std::runtime_error("[ONNX] Current backend supports exactly one model input");
+        }
+
+        size_t input_tensor_size = 1;
+        for (int64_t dim : input_shape) {
+            if (dim <= 0) {
+                throw std::runtime_error("[ONNX] Input shape contains a non-positive dimension");
+            }
+            input_tensor_size *= static_cast<size_t>(dim);
+        }
+
         Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
             memory_info_,
             const_cast<float*>(input_data),
-            input_shape[1] * input_shape[2] * input_shape[3],
+            input_tensor_size,
             input_shape.data(),
             input_shape.size());
 
@@ -187,7 +203,7 @@ std::vector<Detection> ONNXRuntimeBackend::runInference(
             Ort::RunOptions{nullptr},
             input_names_.data(),
             &input_tensor,
-            input_names_.size(),
+            1,
             output_names_.data(),
             output_names_.size());
 

@@ -15,8 +15,6 @@ services:
 
     network_mode: host
 
-    privileged: true
-
     devices:
       - "/dev/video0:/dev/video0"
       - "/dev/nvidia0:/dev/nvidia0"
@@ -29,7 +27,8 @@ services:
 
     environment:
       - LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/openh264/lib:/usr/local/lib:/usr/local/cuda/lib64
-      - CAMERA_MODEL_PATH=/models/yolov8x.onnx
+      - CAMERA_MODEL_PATH=/models/yolov8x.engine
+      - CAMERA_ONNX_FALLBACK_MODEL_PATH=/models/yolov8x.onnx
       - CAMERA_TEST_VIDEO_PATH=/media/test_video.mp4
       - CAMERA_SIGNALING_URL=${CAMERA_SIGNALING_URL:-ws://127.0.0.1:3002/ws}
       - CAMERA_AUTH_JWT_SECRET=${CAMERA_AUTH_JWT_SECRET:-}

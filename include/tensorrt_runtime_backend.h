@@ -46,6 +46,9 @@ private:
     std::shared_ptr<nvinfer1::ICudaEngine> engine_;
     std::shared_ptr<nvinfer1::IExecutionContext> context_;
     std::vector<void*> device_bindings_;
+    std::vector<size_t> binding_sizes_;
+    int input_binding_index_;
+    int output_binding_index_;
     bool verbose_logging_;
 };
 

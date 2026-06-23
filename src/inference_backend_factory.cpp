@@ -4,12 +4,20 @@
 #include "tensorrt_runtime_backend.h"
 #endif
 #include <cstdlib>
+#include <cctype>
 #include <iostream>
 #include <string>
+#include <algorithm>
 
 std::unique_ptr<InferenceBackend> InferenceBackendFactory::createBackend() {
     const char* runtime_env = std::getenv("RUNTIME_BACKEND");
     std::string runtime_backend = runtime_env ? runtime_env : "onnx";
+
+    return createBackend(runtime_backend);
+}
+
+std::unique_ptr<InferenceBackend> InferenceBackendFactory::createBackend(const std::string& requested_backend) {
+    std::string runtime_backend = requested_backend;
 
     for (auto& c : runtime_backend) {
         c = std::tolower(static_cast<unsigned char>(c));

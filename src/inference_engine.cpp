@@ -2,12 +2,22 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <cmath>
 #include <iostream>
 #include <chrono>
+#include <filesystem>
+#include <string>
 #include <opencv2/opencv.hpp>
 
 namespace {
+std::string readEnvString(const char* name, const std::string& fallback) {
+    if (const char* raw = std::getenv(name)) {
+        return raw;
+    }
+    return fallback;
+}
+
 int readEnvInt(const char* name, int fallback) {
     if (const char* raw = std::getenv(name)) {
         try {
@@ -35,6 +45,22 @@ bool readEnvBool(const char* name, bool fallback) {
     }
     return fallback;
 }
+
+std::string resolveOnnxFallbackModelPath(const std::string& model_path) {
+    const std::string configured = readEnvString("CAMERA_ONNX_FALLBACK_MODEL_PATH", "");
+    if (!configured.empty()) {
+        return configured;
+    }
+
+    std::filesystem::path fallback_path(model_path);
+    const std::string extension = fallback_path.extension().string();
+    if (extension == ".engine" || extension == ".plan" || extension == ".trt" || extension == ".tensorrt") {
+        fallback_path.replace_extension(".onnx");
+        return fallback_path.string();
+    }
+
+    return model_path;
+}
 }
 
 InferenceEngine::InferenceEngine(const std::string& model_path)
@@ -49,12 +75,24 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
     input_tensor_values_.resize(static_cast<size_t>(3 * input_height_ * input_width_));
 
     try {
-        backend_ = InferenceBackendFactory::createBackend();
+        const std::string requested_backend = readEnvString("RUNTIME_BACKEND", "onnx");
+        backend_ = InferenceBackendFactory::createBackend(requested_backend);
         backend_->initialize(model_path);
         std::cout << "[Engine] Backend initialized: " << backend_->getBackendName() << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "[Engine] Backend initialization failed: " << e.what() << std::endl;
-        throw;
+        const std::string requested_backend = readEnvString("RUNTIME_BACKEND", "onnx");
+        std::string lowered_backend = requested_backend;
+        std::transform(lowered_backend.begin(), lowered_backend.end(), lowered_backend.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lowered_backend != "tensorrt") {
+            throw;
+        }
+
+        std::cerr << "[Engine] Falling back to ONNX Runtime" << std::endl;
+        backend_ = InferenceBackendFactory::createBackend("onnx");
+        backend_->initialize(resolveOnnxFallbackModelPath(model_path));
+        std::cout << "[Engine] Backend initialized: " << backend_->getBackendName() << std::endl;
     }
 }
 
