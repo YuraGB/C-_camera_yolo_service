@@ -313,7 +313,7 @@ docker-compose -f docker-compose.yml up --build
 Create `docker-compose.rocm.yml`:
 
 ```yaml
-version: '3'
+version: "3"
 services:
   camera-cv:
     build:
@@ -363,6 +363,7 @@ docker-compose -f docker-compose.tensorrt.yml up --build
 ```
 
 This uses:
+
 - NVIDIA CUDA base image
 - TensorRT 8.6+ runtime
 - ONNX Runtime with CUDA support
@@ -379,6 +380,7 @@ export CAMERA_SIGNALING_URL=ws://127.0.0.1:3002/ws
 **Local build for NVIDIA with TensorRT:**
 
 Requirements:
+
 - CUDA Toolkit 12.2+
 - TensorRT 8.6+
 - nvidia-docker or `--gpus all` support

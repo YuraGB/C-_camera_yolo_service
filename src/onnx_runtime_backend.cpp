@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <atomic>
+#include <thread>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -18,8 +19,6 @@
 #ifdef min
 #undef min
 #endif
-#else
-#include <dlfcn.h>
 #endif
 
 #if defined(__has_include)
@@ -60,114 +59,6 @@ bool readEnvBool(const char* name, bool fallback) {
     return fallback;
 }
 
-#ifdef _WIN32
-std::string narrow(const std::wstring& value) {
-    if (value.empty()) return {};
-    const int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (size <= 1) return {};
-    std::string result(static_cast<size_t>(size - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, result.data(), size, nullptr, nullptr);
-    return result;
-}
-
-std::string getFileVersionString(const std::wstring& dll_path) {
-    DWORD handle = 0;
-    const DWORD version_size = GetFileVersionInfoSizeW(dll_path.c_str(), &handle);
-    if (version_size == 0) return {};
-    std::vector<char> version_data(version_size);
-    if (!GetFileVersionInfoW(dll_path.c_str(), 0, version_size, version_data.data())) return {};
-    VS_FIXEDFILEINFO* file_info = nullptr;
-    UINT file_info_len = 0;
-    if (!VerQueryValueW(version_data.data(), L"\\", reinterpret_cast<LPVOID*>(&file_info), &file_info_len) ||
-        file_info == nullptr) return {};
-    return std::to_string(HIWORD(file_info->dwFileVersionMS)) + "." +
-           std::to_string(LOWORD(file_info->dwFileVersionMS)) + "." +
-           std::to_string(HIWORD(file_info->dwFileVersionLS)) + "." +
-           std::to_string(LOWORD(file_info->dwFileVersionLS));
-}
-
-void logLoadedModuleVersion(const wchar_t* module_name, const char* label) {
-    HMODULE module = GetModuleHandleW(module_name);
-    if (!module) {
-        std::cout << "[ONNX] " << label << " module is not currently loaded" << std::endl;
-        return;
-    }
-    std::wstring module_path(MAX_PATH, L'\0');
-    const DWORD length = GetModuleFileNameW(module, module_path.data(), static_cast<DWORD>(module_path.size()));
-    if (length == 0) {
-        std::cout << "[ONNX] " << label << " module is loaded, but its path could not be resolved" << std::endl;
-        return;
-    }
-    module_path.resize(length);
-    const auto version = getFileVersionString(module_path);
-    std::cout << "[ONNX] " << label << " module path: " << narrow(module_path) << std::endl;
-    if (version.empty()) {
-        std::cout << "[ONNX] " << label << " module version could not be determined" << std::endl;
-    } else {
-        std::cout << "[ONNX] " << label << " module version: " << version << std::endl;
-    }
-}
-
-using AppendExecutionProviderDeviceFn = OrtStatus*(ORT_API_CALL*)(OrtSessionOptions*, int);
-
-bool appendProviderBySymbol(HMODULE ort_module,
-                            const char* symbol_name,
-                            OrtSessionOptions* session_options,
-                            int device_id,
-                            std::string& error_message) {
-    if (!ort_module) {
-        error_message = "onnxruntime.dll is not loaded";
-        return false;
-    }
-    auto append_fn = reinterpret_cast<AppendExecutionProviderDeviceFn>(
-        GetProcAddress(ort_module, symbol_name)
-    );
-    if (!append_fn) {
-        error_message = std::string(symbol_name) + " export is not available";
-        return false;
-    }
-    OrtStatus* status = append_fn(session_options, device_id);
-    if (!status) return true;
-    error_message = Ort::GetApi().GetErrorMessage(status);
-    Ort::GetApi().ReleaseStatus(status);
-    return false;
-}
-
-#elif defined(__linux__)
-using AppendExecutionProviderDeviceFn = OrtStatus*(ORT_API_CALL*)(OrtSessionOptions*, int);
-
-void* openOnnxRuntimeModule() {
-    void* module = dlopen("libonnxruntime.so", RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
-    if (!module) {
-        module = dlopen("libonnxruntime.so.1", RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
-    }
-    return module;
-}
-
-bool appendProviderBySymbol(void* ort_module,
-                            const char* symbol_name,
-                            OrtSessionOptions* session_options,
-                            int device_id,
-                            std::string& error_message) {
-    if (!ort_module) {
-        error_message = "libonnxruntime.so is not loaded";
-        return false;
-    }
-    auto append_fn = reinterpret_cast<AppendExecutionProviderDeviceFn>(
-        dlsym(ort_module, symbol_name)
-    );
-    if (!append_fn) {
-        error_message = std::string(symbol_name) + " export is not available";
-        return false;
-    }
-    OrtStatus* status = append_fn(session_options, device_id);
-    if (!status) return true;
-    error_message = Ort::GetApi().GetErrorMessage(status);
-    Ort::GetApi().ReleaseStatus(status);
-    return false;
-}
-#endif
-
 void logProviders(const std::vector<std::string>& providers) {
     std::cout << "[ONNX] Runtime version: " << Ort::GetVersionString() << std::endl;
     if (providers.empty()) {
@@ -179,15 +70,6 @@ void logProviders(const std::vector<std::string>& providers) {
         std::cout << " " << provider;
     }
     std::cout << std::endl;
-
-#ifdef _WIN32
-    if (hasProvider(providers, "CUDAExecutionProvider")) {
-        logLoadedModuleVersion(L"onnxruntime_providers_cuda.dll", "CUDAExecutionProvider");
-    }
-    if (hasProvider(providers, "TensorrtExecutionProvider")) {
-        logLoadedModuleVersion(L"onnxruntime_providers_tensorrt.dll", "TensorrtExecutionProvider");
-    }
-#endif
 }
 }
 
@@ -215,12 +97,6 @@ void ONNXRuntimeBackend::initialize(const std::string& model_path) {
     const auto providers = Ort::GetAvailableProviders();
     logProviders(providers);
 
-#ifdef _WIN32
-    HMODULE ort_module = GetModuleHandleW(L"onnxruntime.dll");
-#elif defined(__linux__)
-    void* ort_module = openOnnxRuntimeModule();
-#endif
-
 #if defined(HAS_ORT_CUDA_PROVIDER)
     if (!gpu_enabled && hasProvider(providers, "CUDAExecutionProvider")) {
         try {
@@ -235,26 +111,6 @@ void ONNXRuntimeBackend::initialize(const std::string& model_path) {
             std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider: " << e.what() << std::endl;
         }
     }
-#endif
-
-#if defined(_WIN32) || defined(__linux__)
-    if (!gpu_enabled && hasProvider(providers, "CUDAExecutionProvider")) {
-        std::string error_message;
-        std::cout << "[ONNX] Attempting to enable CUDAExecutionProvider via runtime symbol lookup" << std::endl;
-        if (appendProviderBySymbol(ort_module, "OrtSessionOptionsAppendExecutionProvider_CUDA", 
-                                   &session_options_, 0, error_message)) {
-            selected_execution_provider_ = "CUDAExecutionProvider";
-            std::cout << "[ONNX] CUDAExecutionProvider enabled via runtime symbol lookup" << std::endl;
-            gpu_enabled = true;
-        } else {
-            std::cerr << "[ONNX] Failed to enable CUDAExecutionProvider via runtime symbol lookup: "
-                      << error_message << std::endl;
-        }
-    }
-#endif
-
-#ifdef __linux__
-    if (ort_module) dlclose(ort_module);
 #endif
 
     if (!gpu_enabled) {
