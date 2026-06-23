@@ -358,6 +358,13 @@ RUNTIME_BACKEND=onnx ./build/bin/camera_cv_service
 **Docker with TensorRT (recommended for NVIDIA):**
 
 ```bash
+docker compose -f docker-compose.tensorrt.yml build
+docker compose -f docker-compose.tensorrt.yml up
+```
+
+Or build and start in one command:
+
+```bash
 docker-compose -f docker-compose.tensorrt.yml up --build
 ```
 
