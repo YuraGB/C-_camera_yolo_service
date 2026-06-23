@@ -1,17 +1,17 @@
 services:
-  camera-cv:
-    container_name: camera_cv_service
+  camera-cv-tensorrt:
+    container_name: camera_cv_service_tensorrt
 
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.tensorrt
       args:
-        UBUNTU_VERSION: "24.04"
-        ONNXRUNTIME_VERSION: "1.18.1"
-        ONNXRUNTIME_FLAVOR: "cpu"
+        CUDA_VERSION: "12.2.2-runtime-ubuntu22.04"
+        TENSORRT_VERSION: "8.6.1"
         LIBDATACHANNEL_VERSION: "v0.22.5"
+        UBUNTU_VERSION: "22.04"
 
-    image: camera-cv-service:latest
+    image: camera-cv-service-tensorrt:latest
 
     network_mode: host
 
@@ -19,6 +19,8 @@ services:
 
     devices:
       - "/dev/video0:/dev/video0"
+      - "/dev/nvidia0:/dev/nvidia0"
+      - "/dev/nvidia-uvm:/dev/nvidia-uvm"
 
     group_add:
       - video
@@ -26,13 +28,13 @@ services:
     restart: unless-stopped
 
     environment:
-      - LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/openh264/lib:/usr/local/lib
+      - LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/openh264/lib:/usr/local/lib:/usr/local/cuda/lib64
       - CAMERA_MODEL_PATH=/models/yolov8x.onnx
       - CAMERA_TEST_VIDEO_PATH=/media/test_video.mp4
       - CAMERA_SIGNALING_URL=${CAMERA_SIGNALING_URL:-ws://127.0.0.1:3002/ws}
       - CAMERA_AUTH_JWT_SECRET=${CAMERA_AUTH_JWT_SECRET:-}
       - CAMERA_VERBOSE_LOGS=${CAMERA_VERBOSE_LOGS:-false}
-      - RUNTIME_BACKEND=${RUNTIME_BACKEND:-onnx}
+      - RUNTIME_BACKEND=tensorrt
 
     volumes:
       - ./models:/models
@@ -43,3 +45,10 @@ services:
 
     tty: true
     stdin_open: true
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+              count: 1

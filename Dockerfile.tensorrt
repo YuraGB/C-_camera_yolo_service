@@ -1,0 +1,160 @@
+# syntax=docker/dockerfile:1.7
+
+ARG CUDA_VERSION=12.2.2-runtime-ubuntu22.04
+ARG TENSORRT_VERSION=8.6.1
+ARG LIBDATACHANNEL_VERSION=v0.22.5
+ARG UBUNTU_VERSION=22.04
+
+############################
+# BASE BUILD IMAGE
+############################
+FROM nvcr.io/nvidia/cuda:${CUDA_VERSION} AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    build-essential \
+    cmake \
+    curl \
+    git \
+    make \
+    meson \
+    ninja-build \
+    pkg-config \
+    nasm \
+    tar \
+    xz-utils \
+    libopencv-dev \
+    libssl-dev \
+    libv4l-dev \
+    zlib1g-dev \
+    libeigen3-dev \
+    nlohmann-json3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+############################
+# TENSORRT
+############################
+FROM base AS tensorrt
+
+ARG TENSORRT_VERSION
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tensorrt=${TENSORRT_VERSION}-1+cuda12.2 \
+    libnvinfer-dev=${TENSORRT_VERSION}-1+cuda12.2 \
+    libnvinfer-plugin-dev=${TENSORRT_VERSION}-1+cuda12.2 \
+    && rm -rf /var/lib/apt/lists/*
+
+############################
+# ONNXRUNTIME
+############################
+FROM base AS onnxruntime
+
+ARG ONNXRUNTIME_VERSION=1.18.1
+
+RUN curl -fsSL \
+    "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}.tgz" \
+    -o /tmp/ort.tgz \
+    && mkdir -p /opt/onnxruntime \
+    && tar -xzf /tmp/ort.tgz -C /opt/onnxruntime --strip-components=1 \
+    && rm -f /tmp/ort.tgz
+
+############################
+# libdatachannel
+############################
+FROM base AS libdatachannel
+
+ARG LIBDATACHANNEL_VERSION
+
+WORKDIR /tmp
+
+RUN git clone --recursive --depth 1 --branch ${LIBDATACHANNEL_VERSION} \
+    https://github.com/paullouisageneau/libdatachannel.git
+
+RUN cmake -S libdatachannel -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=ON \
+    -DNO_EXAMPLES=ON \
+    -DNO_TESTS=ON \
+    -DUSE_GNUTLS=OFF \
+    -DUSE_NICE=OFF \
+    && cmake --build build --parallel \
+    && cmake --install build --prefix /opt/libdatachannel \
+    && rm -rf /tmp/libdatachannel
+
+############################
+# APP BUILD
+############################
+FROM base AS builder
+
+WORKDIR /src
+
+COPY . .
+
+RUN git submodule update --init --recursive || true
+
+RUN if [ ! -f third_party/ByteTrack-cpp/src/BYTETracker.cpp ]; then \
+        git clone --depth 1 https://github.com/Vertical-Beach/ByteTrack-cpp.git third_party/ByteTrack-cpp; \
+    fi
+
+COPY --from=tensorrt /usr /usr
+COPY --from=onnxruntime /opt/onnxruntime /opt/onnxruntime
+COPY --from=libdatachannel /opt/libdatachannel /opt/libdatachannel
+
+RUN if [ -f third_party/openh264-2.6.0/codec/common/x86/cpuid.asm ]; then \
+        openh264_source=third_party/openh264-2.6.0; \
+    else \
+        git clone --depth 1 --branch v2.6.0 https://github.com/cisco/openh264.git /tmp/openh264; \
+        openh264_source=/tmp/openh264; \
+    fi \
+    && meson setup /tmp/openh264-build "${openh264_source}" \
+        --prefix=/opt/openh264 \
+        --libdir=lib \
+        --buildtype=release \
+        -Dtests=disabled \
+    && meson compile -C /tmp/openh264-build \
+    && meson install -C /tmp/openh264-build \
+    && rm -rf /tmp/openh264 /tmp/openh264-build
+
+RUN cmake -S . -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DONNXRUNTIME_ROOT=/opt/onnxruntime \
+    -DUSE_TENSORRT=ON \
+    -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda \
+    -DTENSORRT_INCLUDE_DIR=/usr/include \
+    -DCMAKE_PREFIX_PATH="/opt/libdatachannel;/opt/openh264;/usr/local/cuda" \
+    && cmake --build build --parallel \
+    && cmake --install build --prefix /opt/app
+
+############################
+# RUNTIME
+############################
+FROM nvcr.io/nvidia/cuda:${CUDA_VERSION}
+
+ARG TENSORRT_VERSION
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopencv-dev \
+    libstdc++6 \
+    libgcc-s1 \
+    libgomp1 \
+    libssl3 \
+    openssl \
+    tini \
+    tensorrt=${TENSORRT_VERSION}-1+cuda12.2 \
+    libnvinfer-so-${TENSORRT_VERSION} \
+    libnvinfer-plugin-so-${TENSORRT_VERSION} \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=onnxruntime /opt/onnxruntime /opt/onnxruntime
+COPY --from=builder /opt/openh264 /opt/openh264
+COPY --from=builder /opt/app /opt/app
+COPY --from=libdatachannel /opt/libdatachannel /usr/local
+
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/openh264/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64
+
+WORKDIR /opt/app
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/opt/app/bin/camera_cv_service"]
