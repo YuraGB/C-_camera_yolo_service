@@ -256,6 +256,178 @@ On Linux:
 bash scripts/prepare-assets.sh
 ```
 
+## Deployment & Runtime Selection
+
+The service supports multiple inference backends:
+
+- **ONNX Runtime** (default) — CPU or GPU via execution providers (CUDA, ROCM, CoreML)
+- **TensorRT** (NVIDIA GPU only) — optional, compile-time enabled with `USE_TENSORRT=ON`
+
+### CPU Only (No GPU)
+
+**Docker:**
+
+```bash
+docker-compose up --build
+```
+
+**Local build:**
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DONNXRUNTIME_ROOT=/opt/onnxruntime \
+  -DUSE_TENSORRT=OFF
+
+cmake --build build --parallel
+cmake --install build --prefix /opt/app
+
+RUNTIME_BACKEND=onnx /opt/app/bin/camera_cv_service
+```
+
+**Environment:**
+
+```bash
+export RUNTIME_BACKEND=onnx
+export CAMERA_MODEL_PATH=/path/to/yolov8x.onnx
+export CAMERA_SIGNALING_URL=ws://127.0.0.1:3002/ws
+```
+
+### Non-NVIDIA GPU (Radeon/AMD, Intel Arc, etc.)
+
+Use ONNX Runtime GPU providers: ROCM (AMD), OpenCL (Intel), or CPU fallback.
+
+**Docker (CPU fallback):**
+
+```bash
+docker-compose up --build
+RUNTIME_BACKEND=onnx
+```
+
+**Docker with ROCM (AMD Radeon):**
+
+```bash
+docker-compose -f docker-compose.yml up --build
+```
+
+Create `docker-compose.rocm.yml`:
+
+```yaml
+version: '3'
+services:
+  camera-cv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ONNXRUNTIME_FLAVOR: rocm
+    environment:
+      - RUNTIME_BACKEND=onnx
+      - CAMERA_MODEL_PATH=/models/yolov8x.onnx
+      - CAMERA_SIGNALING_URL=ws://127.0.0.1:3002/ws
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    volumes:
+      - ./models:/models
+      - ./media:/media
+```
+
+Run:
+
+```bash
+docker-compose -f docker-compose.rocm.yml up --build
+```
+
+**Local build for AMD ROCM:**
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DONNXRUNTIME_ROOT=/opt/onnxruntime-rocm \
+  -DUSE_TENSORRT=OFF
+
+cmake --build build --parallel
+
+RUNTIME_BACKEND=onnx ./build/bin/camera_cv_service
+```
+
+### NVIDIA GPU (TensorRT Recommended)
+
+**Docker with TensorRT (recommended for NVIDIA):**
+
+```bash
+docker-compose -f docker-compose.tensorrt.yml up --build
+```
+
+This uses:
+- NVIDIA CUDA base image
+- TensorRT 8.6+ runtime
+- ONNX Runtime with CUDA support
+- Automatic GPU device mapping
+
+**Environment:**
+
+```bash
+export RUNTIME_BACKEND=tensorrt
+export CAMERA_MODEL_PATH=/models/yolov8x.engine
+export CAMERA_SIGNALING_URL=ws://127.0.0.1:3002/ws
+```
+
+**Local build for NVIDIA with TensorRT:**
+
+Requirements:
+- CUDA Toolkit 12.2+
+- TensorRT 8.6+
+- nvidia-docker or `--gpus all` support
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DONNXRUNTIME_ROOT=/opt/onnxruntime \
+  -DUSE_TENSORRT=ON \
+  -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda \
+  -DTENSORRT_INCLUDE_DIR=/usr/include
+
+cmake --build build --parallel
+cmake --install build --prefix /opt/app
+
+RUNTIME_BACKEND=tensorrt /opt/app/bin/camera_cv_service
+```
+
+**Model conversion (ONNX → TensorRT engine):**
+
+```bash
+trtexec \
+  --onnx=yolov8x.onnx \
+  --saveEngine=yolov8x.engine \
+  --workspace=8192 \
+  --fp16
+```
+
+Then set:
+
+```bash
+export CAMERA_MODEL_PATH=/path/to/yolov8x.engine
+export RUNTIME_BACKEND=tensorrt
+```
+
+### Runtime Backend Selection
+
+The `RUNTIME_BACKEND` environment variable selects the inference engine:
+
+- `onnx` (default) — ONNX Runtime
+- `tensorrt` — TensorRT (only if compiled with `USE_TENSORRT=ON`)
+
+If TensorRT is requested but fails to initialize, the service automatically falls back to ONNX Runtime.
+
+```bash
+RUNTIME_BACKEND=tensorrt ./camera_cv_service
+# Falls back to ONNX if TensorRT unavailable
+```
+
 Useful environment variables:
 
 - `CAMERA_MODEL_PATH`
