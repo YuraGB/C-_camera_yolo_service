@@ -59,6 +59,7 @@ set(OPENH264_RUNTIME_DLL "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openh264-2.6.0
 # OPTIONS
 # =========================
 option(USE_BYTETRACK "Enable ByteTrack tracking" ON)
+option(USE_TENSORRT "Enable TensorRT runtime backend" OFF)
 
 # =========================
 # DEPENDENCIES
@@ -106,6 +107,8 @@ add_executable(camera_cv_service
     src/capture/opencv_video_source.cpp
     src/camera_manager.cpp
     src/inference_engine.cpp
+    src/inference_backend_factory.cpp
+    src/onnx_runtime_backend.cpp
     src/openh264_encoder.cpp
     src/tracking_manager.cpp
     src/webrtc_service.cpp
@@ -122,6 +125,27 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(camera_cv_service PRIVATE src/platform/linux/linux_platform_services.cpp)
 else()
     message(FATAL_ERROR "Unsupported platform")
+endif()
+
+# =========================
+# TENSORRT CONFIG
+# =========================
+if(USE_TENSORRT)
+    find_package(CUDA REQUIRED)
+    find_path(TENSORRT_INCLUDE_DIR NvInfer.h REQUIRED)
+    find_library(TENSORRT_LIBRARY NAMES nvinfer REQUIRED)
+    find_library(TENSORRT_PLUGIN_LIBRARY NAMES nvinfer_plugin REQUIRED)
+    
+    message(STATUS "TensorRT enabled")
+    message(STATUS "TensorRT include: ${TENSORRT_INCLUDE_DIR}")
+    message(STATUS "TensorRT library: ${TENSORRT_LIBRARY}")
+    
+    target_sources(camera_cv_service PRIVATE src/tensorrt_runtime_backend.cpp)
+    target_include_directories(camera_cv_service PRIVATE ${TENSORRT_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
+    target_compile_definitions(camera_cv_service PRIVATE USE_TENSORRT=1)
+    target_link_libraries(camera_cv_service PRIVATE ${TENSORRT_LIBRARY} ${TENSORRT_PLUGIN_LIBRARY} ${CUDA_LIBRARIES})
+else()
+    message(STATUS "TensorRT disabled (set USE_TENSORRT=ON to enable)")
 endif()
 
 # =========================

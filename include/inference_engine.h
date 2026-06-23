@@ -9,8 +9,8 @@
 #include <condition_variable>
 #include <atomic>
 #include <cstdint>
-#include <onnxruntime_cxx_api.h>
 #include "frame.h"
+#include "inference_backend.h"
 
 struct InferenceMetricsSnapshot {
     int64_t submitted_frames = 0;
@@ -41,23 +41,9 @@ private:
     void inferenceLoop();
     std::shared_ptr<Frame> processFrameImpl(const std::shared_ptr<Frame>& frame);
     void prepareInputTensor(const cv::Mat& frame);
-    std::vector<Detection> parseYOLO(
-        const float* data,
-        const std::vector<int64_t>& output_shape,
-        int frame_width,
-        int frame_height);
-    void configureExecutionProvider();
 
     std::string model_path_;
-    std::string selected_execution_provider_ = "CPUExecutionProvider";
-    Ort::Env env_;
-    Ort::SessionOptions session_options_;
-    std::unique_ptr<Ort::Session> session_;
-
-    std::vector<std::string> input_names_str_;
-    std::vector<const char*> input_names_;
-    std::vector<std::string> output_names_str_;
-    std::vector<const char*> output_names_;
+    std::unique_ptr<InferenceBackend> backend_;
 
     std::thread inference_thread_;
     std::atomic<bool> running_{false};
@@ -72,7 +58,6 @@ private:
     float confidence_threshold_ = 0.25f;
     float iou_threshold_ = 0.45f;
     bool verbose_logging_ = false;
-    Ort::MemoryInfo memory_info_;
     std::vector<float> input_tensor_values_;
     std::vector<int64_t> input_shape_;
 
