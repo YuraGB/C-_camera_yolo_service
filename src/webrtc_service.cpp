@@ -247,8 +247,22 @@ void WebRTCService::addVideoSource(const std::string& camera_id) {
 
   for (const auto& session : sessions) {
     attachVideoTrack(session, source_state);
-    if (running_) {
+    if (!running_ || !session || !session->configured || session->closing ||
+        session->closed) {
+      continue;
+    }
+
+    bool expected = false;
+    if (!session->offer_in_progress.compare_exchange_strong(expected, true)) {
+      continue;
+    }
+
+    try {
       session->peer_connection->setLocalDescription(rtc::Description::Type::Offer);
+    } catch (const std::exception& error) {
+      session->offer_in_progress = false;
+      std::cerr << "[WebRTC] Failed to renegotiate peer " << session->peer_id
+                << " after adding video source: " << error.what() << std::endl;
     }
   }
 }
@@ -279,14 +293,11 @@ void WebRTCService::flushPendingSignalingMessages() {
 
 std::optional<std::string> WebRTCService::extractPeerId(
     const nlohmann::json& message) const {
-  if (message.contains("peerId")) {
-    return message.at("peerId").get<std::string>();
-  }
-  if (message.contains("sourcePeerId")) {
-    return message.at("sourcePeerId").get<std::string>();
-  }
-  if (message.contains("from")) {
-    return message.at("from").get<std::string>();
+  for (const auto* key : {"peerId", "sourcePeerId", "from"}) {
+    auto it = message.find(key);
+    if (it != message.end() && it->is_string()) {
+      return it->get<std::string>();
+    }
   }
   return std::nullopt;
 }

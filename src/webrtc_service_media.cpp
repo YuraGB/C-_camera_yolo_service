@@ -211,20 +211,17 @@ void WebRTCService::broadcastDetectionMessage(const std::string& message) {
   }
 
   for (const auto& session : sessions) {
-    if (!session || !session->detection_channel) {
-      continue;
-    }
-    if (!session->detection_channel->isOpen()) {
-      std::lock_guard<std::mutex> pending_lock(session->pending_detection_mutex);
-      session->pending_detection_message = message;
-      if (!session->logged_detection_channel_not_open) {
-        std::cout << "[WebRTC] Queueing detection_frame for peer " << session->peer_id
+    if (!session || session->closing || session->closed ||
+        !session->detection_channel || !session->detection_channel->isOpen()) {
+      if (session && !session->logged_detection_channel_not_open) {
+        std::cout << "[WebRTC] Dropping detection_frame for peer " << session->peer_id
                   << ": detection channel is not open yet" << std::endl;
         session->logged_detection_channel_not_open = true;
       }
       continue;
     }
-    sendPendingDetectionMessage(session);
+
+    session->logged_detection_channel_not_open = false;
     if (session->detection_channel->bufferedAmount() >
         config_.max_detection_buffered_bytes) {
       std::cout << "[WebRTC] Skipping detection_frame for peer " << session->peer_id
@@ -237,26 +234,6 @@ void WebRTCService::broadcastDetectionMessage(const std::string& message) {
       std::cout << "[WebRTC] Sending detection_frame to peer " << session->peer_id
                 << std::endl;
     }
-    session->detection_channel->send(message);
-  }
-}
-
-void WebRTCService::sendPendingDetectionMessage(
-    const std::shared_ptr<PeerSession>& session) {
-  if (!session || !session->detection_channel || !session->detection_channel->isOpen()) {
-    return;
-  }
-
-  std::string message;
-  {
-    std::lock_guard<std::mutex> lock(session->pending_detection_mutex);
-    message.swap(session->pending_detection_message);
-    session->logged_detection_channel_not_open = false;
-  }
-
-  if (!message.empty() &&
-      session->detection_channel->bufferedAmount() <=
-          config_.max_detection_buffered_bytes) {
     session->detection_channel->send(message);
   }
 }

@@ -37,8 +37,7 @@ inline rtc::DataChannelInit makeDetectionChannelInit() {
 }
 
 inline bool isPeerTerminal(rtc::PeerConnection::State state) {
-  return state == rtc::PeerConnection::State::Disconnected ||
-         state == rtc::PeerConnection::State::Failed ||
+  return state == rtc::PeerConnection::State::Failed ||
          state == rtc::PeerConnection::State::Closed;
 }
 

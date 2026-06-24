@@ -20,7 +20,7 @@ std::shared_ptr<WebRTCService::PeerSession> WebRTCService::createPeerSession(
   }
 
   rtc::Configuration configuration;
-  configuration.disableAutoNegotiation = false;
+  configuration.disableAutoNegotiation = true;
   configuration.maxMessageSize = 2 * 1024 * 1024;
   for (const auto& ice_server : config_.ice_servers) {
     if (!ice_server.empty()) {
@@ -47,9 +47,20 @@ void WebRTCService::configurePeerSession(const std::shared_ptr<PeerSession>& ses
   }
 
   session->peer_connection->onStateChange(
-      [this, peer_id = session->peer_id](rtc::PeerConnection::State state) {
+      [this, weak_session = std::weak_ptr<PeerSession>(session),
+       peer_id = session->peer_id](rtc::PeerConnection::State state) {
         std::cout << "[WebRTC] Peer " << peer_id << " state: " << state
                   << std::endl;
+        auto locked = weak_session.lock();
+        if (locked) {
+          locked->connected = state == rtc::PeerConnection::State::Connected;
+          if (locked->connected) {
+            locked->offer_in_progress = false;
+          }
+          if (isPeerTerminal(state)) {
+            locked->closed = true;
+          }
+        }
         if (isPeerTerminal(state)) {
           cleanupPeerSession(peer_id);
         }
@@ -63,8 +74,12 @@ void WebRTCService::configurePeerSession(const std::shared_ptr<PeerSession>& ses
           return;
         }
 
+        const std::string description_type = description.typeString();
+        if (description_type == "offer") {
+          locked->offer_in_progress = true;
+        }
         nlohmann::json message = {
-            {"type", description.typeString()},
+            {"type", description_type},
             {"peerId", config_.local_peer_id},
             {"targetPeerId", locked->peer_id},
             {"sdp", std::string(description)},
@@ -104,7 +119,7 @@ void WebRTCService::configurePeerSession(const std::shared_ptr<PeerSession>& ses
     attachVideoTrack(session, source_state);
   }
 
-  if (!session->detection_channel) {
+  if (create_local_channels && !session->detection_channel) {
     session->detection_channel = session->peer_connection->createDataChannel(
         config_.detection_channel_label, makeDetectionChannelInit());
     std::cout << "[WebRTC] Created local detection data channel for peer "
@@ -140,16 +155,24 @@ void WebRTCService::attachDataChannel(
           std::cout << "[WebRTC] DataChannel opened for " << locked->peer_id << ": "
                     << label << std::endl;
           if (label == config_.detection_channel_label) {
+            locked->detection_channel_open = true;
             sendTrackMap(locked);
-            sendPendingDetectionMessage(locked);
           }
         }
       });
 
-  channel->onClosed([peer_id = session->peer_id, label = channel->label()]() {
-    std::cout << "[WebRTC] DataChannel closed for " << peer_id << ": " << label
-              << std::endl;
-  });
+  channel->onClosed(
+      [weak_session = std::weak_ptr<PeerSession>(session),
+       expected_label = config_.detection_channel_label,
+       peer_id = session->peer_id, label = channel->label()]() {
+        if (auto locked = weak_session.lock()) {
+          if (label == expected_label) {
+            locked->detection_channel_open = false;
+          }
+        }
+        std::cout << "[WebRTC] DataChannel closed for " << peer_id << ": " << label
+                  << std::endl;
+      });
 
   channel->onError(
       [peer_id = session->peer_id, label = channel->label()](std::string error) {
@@ -229,6 +252,12 @@ void WebRTCService::cleanupPeerSession(const std::string& peer_id) {
     session = it->second;
     sessions_.erase(it);
   }
+
+  if (session->closing.exchange(true)) {
+    return;
+  }
+  session->closed = true;
+  session->detection_channel_open = false;
 
   if (session->detection_channel) {
     session->detection_channel->close();

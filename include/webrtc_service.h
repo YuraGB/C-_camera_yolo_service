@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <chrono>
 
@@ -96,10 +97,16 @@ class WebRTCService {
     std::unordered_map<std::string, std::shared_ptr<rtc::Track>> video_tracks;
     std::unordered_map<std::string, std::shared_ptr<rtc::RtpPacketizationConfig>> video_rtp_configs;
     std::shared_ptr<rtc::DataChannel> detection_channel;
-    std::mutex pending_detection_mutex;
-    std::string pending_detection_message;
     bool logged_detection_channel_not_open = false;
+    std::mutex pending_ice_mutex;
+    std::vector<std::pair<std::string, std::string>> pending_remote_candidates;
     std::atomic<bool> configured{false};
+    std::atomic<bool> detection_channel_open{false};
+    std::atomic<bool> offer_in_progress{false};
+    std::atomic<bool> remote_description_applied{false};
+    std::atomic<bool> connected{false};
+    std::atomic<bool> closing{false};
+    std::atomic<bool> closed{false};
   };
 
   std::shared_ptr<PeerSession> createPeerSession(const std::string& peer_id);
@@ -108,6 +115,7 @@ class WebRTCService {
   void attachVideoTrack(const std::shared_ptr<PeerSession>& session, const std::shared_ptr<SourceStreamState>& source_state);
   void cleanupPeerSession(const std::string& peer_id);
   void cleanupFrontendSessionsExcept(const std::string& active_peer_id);
+  void flushPendingRemoteCandidates(const std::shared_ptr<PeerSession>& session);
 
   std::string buildDetectionMessage(
       const Frame& frame,
@@ -121,7 +129,6 @@ class WebRTCService {
       const SourceStreamState& source_state,
       int64_t now_ms) const;
   void broadcastDetectionMessage(const std::string& message);
-  void sendPendingDetectionMessage(const std::shared_ptr<PeerSession>& session);
   void maybeSendVideoLatencySample(
       const std::shared_ptr<SourceStreamState>& source_state,
       const std::shared_ptr<Frame>& frame,
