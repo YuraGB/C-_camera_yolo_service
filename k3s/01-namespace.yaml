@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cam-det
+  labels:
+    app.kubernetes.io/name: cam-det
+    app.kubernetes.io/part-of: cam-system
+    app.kubernetes.io/managed-by: kubectl

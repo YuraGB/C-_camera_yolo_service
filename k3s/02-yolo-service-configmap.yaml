@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yolo-service-config
+  namespace: cam-det
+  labels:
+    app.kubernetes.io/name: yolo-service
+    app.kubernetes.io/part-of: cam-system
+data:
+  CAMERA_MODEL_PATH: /models/yolo26s.onnx
+  CAMERA_SIGNALING_URL: ws://signaling-app.cam-det.svc.cluster.local:3002/ws
+  CAMERA_TEST_VIDEO_PATH: /media/test_video.mp4
+  CAMERA_PEER_ID: camera-cv-service
+  CAMERA_AUTH_JWT_ISSUER: camera-cv-service
+  CAMERA_AUTH_JWT_AUDIENCE: signaling
+  CAMERA_AUTH_JWT_ROLE: service
+  CAMERA_AUTH_JWT_TTL_SECONDS: "300"
+  CAMERA_MAX_CAMERA_SCAN: "10"
+  CAMERA_INFERENCE_WIDTH: "640"
+  CAMERA_INFERENCE_HEIGHT: "640"
+  CAMERA_CONF_THRESHOLD: "0.25"
+  CAMERA_IOU_THRESHOLD: "0.45"
+  CAMERA_MIN_DETECTION_INTERVAL_MS: "100"
+  CAMERA_H264_BITRATE_BPS: "2500000"
+  CAMERA_MAX_LIVE_LATENCY_MS: "150"
+  CAMERA_MAX_LIVE_WIDTH: "1280"
+  CAMERA_MAX_LIVE_HEIGHT: "720"
+  CAMERA_VIDEO_LATENCY_SAMPLE_INTERVAL_MS: "1000"
+  CAMERA_PIPELINE_METRICS_INTERVAL_MS: "1000"
+  CAMERA_MAX_DETECTION_BUFFERED_BYTES: "131072"
+  CAMERA_VERBOSE_LOGS: "false"

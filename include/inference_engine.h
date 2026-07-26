@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <cstdint>
+#include <chrono>
 #include "frame.h"
 #include "inference_backend.h"
 
@@ -41,6 +42,7 @@ private:
     void inferenceLoop();
     std::shared_ptr<Frame> processFrameImpl(const std::shared_ptr<Frame>& frame);
     void prepareInputTensor(const cv::Mat& frame);
+    void waitForDetectionInterval(std::chrono::steady_clock::time_point inference_started);
 
     std::string model_path_;
     std::unique_ptr<InferenceBackend> backend_;
@@ -55,6 +57,7 @@ private:
 
     int input_width_ = 640;
     int input_height_ = 640;
+    int min_detection_interval_ms_ = 0;
     float confidence_threshold_ = 0.25f;
     float iou_threshold_ = 0.45f;
     bool verbose_logging_ = false;

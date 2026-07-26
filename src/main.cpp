@@ -181,8 +181,6 @@ int main() {
             webrtc_service.addVideoSource(id);
         }
 
-        camera_manager.startAllCameras();
-        inference_engine.start();
         webrtc_service.start();
         std::thread detection_thread(
             detectionPublishLoop,
@@ -195,9 +193,29 @@ int main() {
             std::ref(webrtc_service),
             runtime_config.webrtc.pipeline_metrics_interval_ms);
 
-        std::cout << "[INFO] Service started. Processing frames with WebRTC transport..." << std::endl;
+        std::cout << "[INFO] Service started. Waiting for a WebRTC viewer before processing frames..." << std::endl;
+
+        bool processing_active = false;
 
         while (g_running) {
+            const bool has_viewer = webrtc_service.hasActivePeerConnections();
+            if (has_viewer && !processing_active) {
+                std::cout << "[INFO] WebRTC viewer connected. Starting capture and inference." << std::endl;
+                camera_manager.startAllCameras();
+                inference_engine.start();
+                processing_active = true;
+            } else if (!has_viewer && processing_active) {
+                std::cout << "[INFO] No WebRTC viewers remain. Stopping capture and inference." << std::endl;
+                camera_manager.stopAllCameras();
+                inference_engine.stop();
+                processing_active = false;
+            }
+
+            if (!processing_active) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+
             bool captured_any_frame = false;
 
             auto processFrames = [&](const std::vector<std::string>& ids) {
@@ -237,8 +255,10 @@ int main() {
         if (metrics_thread.joinable()) {
             metrics_thread.join();
         }
-        camera_manager.stopAllCameras();
-        inference_engine.stop();
+        if (processing_active) {
+            camera_manager.stopAllCameras();
+            inference_engine.stop();
+        }
         webrtc_service.stop();
         std::cout << "[INFO] Service stopped." << std::endl;
         return 0;

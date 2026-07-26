@@ -55,6 +55,8 @@ class WebRTCService {
   void stop();
 
   void addVideoSource(const std::string& camera_id);
+  // A viewer counts only after its PeerConnection has reached Connected.
+  bool hasActivePeerConnections() const;
   void sendFrame(const std::string& camera_id, const std::shared_ptr<Frame>& frame);
   void sendDetectionResult(const std::shared_ptr<Frame>& frame);
   void sendPipelineMetrics(const nlohmann::json& payload);
@@ -157,7 +159,7 @@ class WebRTCService {
 
   WebRTCServiceConfig config_;
 
-  std::mutex sessions_mutex_;
+  mutable std::mutex sessions_mutex_;
   std::unordered_map<std::string, std::shared_ptr<PeerSession>> sessions_;
 
   std::mutex sources_mutex_;
