@@ -124,6 +124,16 @@ WebRTCService::~WebRTCService() {
   stop();
 }
 
+bool WebRTCService::hasActivePeerConnections() const {
+  std::lock_guard<std::mutex> lock(sessions_mutex_);
+  for (const auto& [_, session] : sessions_) {
+    if (session && session->connected && !session->closing && !session->closed) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void WebRTCService::start() {
   if (running_) {
     return;

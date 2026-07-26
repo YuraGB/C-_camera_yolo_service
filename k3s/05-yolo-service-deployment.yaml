@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yolo-service
+  namespace: cam-det
+  labels:
+    app: yolo-service
+    app.kubernetes.io/name: yolo-service
+    app.kubernetes.io/part-of: cam-system
+    app.kubernetes.io/managed-by: kubectl
+
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: yolo-service
+
+  template:
+    metadata:
+      labels:
+        app: yolo-service
+        app.kubernetes.io/name: yolo-service
+        app.kubernetes.io/part-of: cam-system
+        app.kubernetes.io/managed-by: kubectl
+
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: yolo-models
+          hostPath:
+            path: /home/theyuhur/Projects/C-_camera_yolo_service/models
+            type: Directory
+        - name: yolo-media
+          hostPath:
+            path: /home/theyuhur/Projects/C-_camera_yolo_service/media
+            type: Directory
+      containers:
+        - name: yolo-service
+          image: docker.io/library/yolo-service:v1
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: yolo-models
+              mountPath: /models
+              readOnly: true
+            - name: yolo-media
+              mountPath: /media
+              readOnly: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+          envFrom:
+            - configMapRef:
+                name: yolo-service-config
+            - secretRef:
+                name: yolo-service-secret

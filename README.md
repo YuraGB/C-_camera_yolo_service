@@ -601,3 +601,30 @@ Container notes:
 - live-video latency sampling is intentionally decoupled from detection timing
 - exact frame-to-sample correlation is best-effort because browser `<video>` does not expose RTP frame ids directly
 - if the browser or network is slower than capture, the service prefers dropping outdated live frames over increasing latency
+
+## K8S (kubernetes)
+
+```Bash
+  # build local docker image
+  docker build -t yolo-service:v1 .
+
+  # Save
+  docker save yolo-service:v1 -o yolo-service:v1.tar
+
+  # export to k3s
+  sudo k3s ctr images import yolo-service:v1.tar
+
+  # start/apply kubernetes
+  ./start.kubernetes.sh
+
+  # delete stop kubernetes
+  ./stop.kubernetes.sh
+```
+
+```bash
+  #remove docker image
+  sudo k3s crictl rmi yolo-service:v1
+  # list images
+  sudo k3s crictl images
+  sudo k3s ctr images ls
+```

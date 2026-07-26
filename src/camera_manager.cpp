@@ -55,6 +55,8 @@ void CameraManager::stopAllCameras() {
         cam->running = false;
         if (cam->capture_thread.joinable())
             cam->capture_thread.join();
+        std::lock_guard<std::mutex> queue_lock(cam->queue_mutex);
+        cam->frame_queue.clear();
     }
 }
 

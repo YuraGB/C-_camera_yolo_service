@@ -12,3 +12,7 @@ CMakeCache.txt
 models/
 .vscode
 .vs
+k3s/
+stop.kuernetes.sh
+
+start.kuernetes.sh

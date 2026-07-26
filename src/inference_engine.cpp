@@ -28,6 +28,16 @@ int readEnvInt(const char* name, int fallback) {
     return fallback;
 }
 
+int readEnvNonNegativeInt(const char* name, int fallback) {
+    if (const char* raw = std::getenv(name)) {
+        try {
+            return std::max(0, std::stoi(raw));
+        } catch (...) {
+        }
+    }
+    return fallback;
+}
+
 float readEnvFloat(const char* name, float fallback) {
     if (const char* raw = std::getenv(name)) {
         try {
@@ -68,6 +78,7 @@ InferenceEngine::InferenceEngine(const std::string& model_path)
       running_(false) {
     input_width_ = readEnvInt("CAMERA_INFERENCE_WIDTH", 640);
     input_height_ = readEnvInt("CAMERA_INFERENCE_HEIGHT", 640);
+    min_detection_interval_ms_ = readEnvNonNegativeInt("CAMERA_MIN_DETECTION_INTERVAL_MS", 0);
     confidence_threshold_ = std::clamp(readEnvFloat("CAMERA_CONF_THRESHOLD", 0.25f), 0.0f, 1.0f);
     iou_threshold_ = std::clamp(readEnvFloat("CAMERA_IOU_THRESHOLD", 0.45f), 0.0f, 1.0f);
     verbose_logging_ = readEnvBool("CAMERA_VERBOSE_LOGS", false);
@@ -115,6 +126,14 @@ void InferenceEngine::stop() {
 
     if (inference_thread_.joinable())
         inference_thread_.join();
+
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    while (!input_queue_.empty()) {
+        input_queue_.pop();
+    }
+    while (!output_queue_.empty()) {
+        output_queue_.pop();
+    }
 }
 
 bool InferenceEngine::isReady() const {
@@ -187,8 +206,10 @@ void InferenceEngine::inferenceLoop() {
             input_queue_.pop();
         }
 
+        const auto inference_started = std::chrono::steady_clock::now();
         auto result_frame = processFrameImpl(frame);
         if (!result_frame) {
+            waitForDetectionInterval(inference_started);
             continue;
         }
 
@@ -199,7 +220,27 @@ void InferenceEngine::inferenceLoop() {
             }
             output_queue_.push(std::move(result_frame));
         }
+
+        waitForDetectionInterval(inference_started);
     }
+}
+
+void InferenceEngine::waitForDetectionInterval(std::chrono::steady_clock::time_point inference_started) {
+    if (min_detection_interval_ms_ <= 0 || !running_) {
+        return;
+    }
+
+    const auto next_allowed_inference =
+        inference_started + std::chrono::milliseconds(min_detection_interval_ms_);
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= next_allowed_inference) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(queue_mutex_);
+    queue_cv_.wait_until(lock, next_allowed_inference, [this]() {
+        return !running_;
+    });
 }
 
 std::shared_ptr<Frame> InferenceEngine::processFrameImpl(const std::shared_ptr<Frame>& frame) {
